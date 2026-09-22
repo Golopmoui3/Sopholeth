@@ -117,7 +117,7 @@ func TestOmegaStatusUninitializedAndInvalidReports(t *testing.T) {
 
 func TestOmegaHelpAndUsage(t *testing.T) {
 	ta := newTestApp(t)
-	for _, args := range [][]string{{"help", "omega"}, {"omega", "--help"}, {"omega", "init", "--help"}, {"omega", "publish", "--help"}, {"omega", "status", "--help"}} {
+	for _, args := range [][]string{{"help", "omega"}, {"omega", "--help"}, {"omega", "init", "--help"}, {"omega", "provision-renewal", "--help"}, {"omega", "publish", "--help"}, {"omega", "status", "--help"}} {
 		out, _ := ta.mustRun(t, "", args...)
 		if !strings.Contains(out, "Usage:") {
 			t.Fatalf("missing help for %v", args)
@@ -194,5 +194,102 @@ func TestOmegaPublishCLIAndVerifiedStatus(t *testing.T) {
 	}
 	if _, err := os.Stat(ta.configPath); !os.IsNotExist(err) {
 		t.Fatal("publisher accessed client profiles")
+	}
+}
+
+func TestOmegaRenewalCLI(t *testing.T) {
+	ta := newTestApp(t)
+	base := t.TempDir()
+	home, online, repository := filepath.Join(base, "offline"), filepath.Join(base, "online"), filepath.Join(base, "repository")
+	server := httptest.NewTLSServer(http.FileServer(http.Dir(repository)))
+	defer server.Close()
+	ta.app.newHTTPClient = server.Client
+	ta.mustRun(t, "", "omega", "init", "--home", home, "--network", "rehearsal", "--repository", server.URL, "--disposable")
+	// Provisioning before the first approval is also supported.
+	ta.mustRun(t, "", "omega", "provision-renewal", "--home", home, "--network", "rehearsal", "--renewal-home", online, "--disposable")
+	manifest := filepath.Join(base, "manifest.json")
+	if err := os.WriteFile(manifest, []byte(`{"schema":1,"network":"rehearsal","enclave":"default","roots":[{"id":"a","origin":"https://a.example.invalid"},{"id":"b","origin":"https://b.example.invalid"},{"id":"c","origin":"https://c.example.invalid"}]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ta.mustRun(t, "", "omega", "publish", "--home", home, "--network", "rehearsal", "--manifest", manifest, "--repository-dir", repository, "--version", "1", "--disposable")
+	if err := os.Rename(home, home+"-unmounted"); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--json", "omega", "publish", "--home", online, "--network", "rehearsal", "--renew", "--disposable"}
+	out, _ := ta.mustRun(t, "", args...)
+	r := decodeJSON(t, out)
+	if r["state"] != "renewal_ready" || r["publication"] != "verified" || r["operational_home"] != online {
+		t.Fatalf("unexpected renewal output: %s", out)
+	}
+	publication := r["release"].(map[string]any)
+	if publication["version"] != float64(1) || publication["renew_after"] == nil || publication["renewal_due"] != false {
+		t.Fatalf("renewed before due or omitted schedule: %s", out)
+	}
+	out, _ = ta.mustRun(t, "", "omega", "status", "--home", online, "--network", "rehearsal", "--verify")
+	if !strings.Contains(out, "Renew after:") || !strings.Contains(out, "Publication: verified") {
+		t.Fatalf("missing renewal status: %s", out)
+	}
+	for _, extra := range [][]string{{"--manifest", manifest}, {"--repository-dir", repository}, {"--version", "2"}} {
+		if code, _, _ := ta.run("", append(append([]string{}, args...), extra...)...); code != exitUsage {
+			t.Fatal("renewal accepted manual approval flags")
+		}
+	}
+	if _, err := os.Stat(ta.configPath); !os.IsNotExist(err) {
+		t.Fatal("renewal accessed client profiles")
+	}
+}
+
+func TestOmegaRenewalUnavailableReports(t *testing.T) {
+	for _, kind := range []string{"missing-home", "missing-parent", "unprovisioned", "missing-custody", "corrupt-custody", "unsafe-home"} {
+		t.Run(kind, func(t *testing.T) {
+			ta := newTestApp(t)
+			home := filepath.Join(t.TempDir(), "online")
+			state, action := "absent", "provision-renewal"
+			if kind == "missing-parent" {
+				home = filepath.Join(home, "nested")
+			} else if kind != "missing-home" {
+				if err := os.Mkdir(home, 0700); err != nil {
+					t.Fatal(err)
+				}
+				state = "unprovisioned"
+				switch kind {
+				case "missing-custody":
+					if err := os.Mkdir(filepath.Join(home, "rehearsal.publication"), 0700); err != nil {
+						t.Fatal(err)
+					}
+					state, action = "invalid", "restore"
+				case "corrupt-custody":
+					if err := os.WriteFile(filepath.Join(home, "rehearsal.renewal.json"), []byte(`{"schema":`), 0600); err != nil {
+						t.Fatal(err)
+					}
+					state, action = "invalid", "restore"
+				case "unsafe-home":
+					if err := os.Chmod(home, 0755); err != nil {
+						t.Fatal(err)
+					}
+					state, action = "invalid", "permissions"
+				}
+			}
+			args := []string{"omega", "publish", "--renew", "--home", home, "--network", "rehearsal", "--disposable"}
+			code, out, errOut := ta.run("", append([]string{"--json"}, args...)...)
+			if code != exitError || out == "" {
+				t.Fatalf("missing error report: exit=%d stdout=%q stderr=%s", code, out, errOut)
+			}
+			r := decodeJSON(t, out)
+			problem, _ := r["problem"].(string)
+			next, _ := r["action"].(string)
+			if r["state"] != state || r["publication"] != "failed" || r["network"] != "rehearsal" || r["operational_home"] != home || problem == "" || !strings.Contains(errOut, problem) || !strings.Contains(next, action) {
+				t.Fatalf("unexpected renewal failure: %s stderr=%s", out, errOut)
+			}
+			code, out, _ = ta.run("", args...)
+			if code != exitError || !strings.Contains(out, next) {
+				t.Fatalf("text report omitted action: %s", out)
+			}
+			if kind == "missing-home" || kind == "missing-parent" {
+				if _, err := os.Lstat(home); !os.IsNotExist(err) {
+					t.Fatal("renewal created the missing home")
+				}
+			}
+		})
 	}
 }
