@@ -115,6 +115,22 @@ not carry trust metadata or choose an arbitrary download URL. If alternate
 locators are added later, they need an explicit policy for allowed origins,
 redirects, and local/private address access.
 
+The planned public home is `https://sopholeth.io/omega/`. Before adopting it,
+extend the client's origin-only repository validation to support a base path
+and confine downloads to that origin and path. Keep node endpoint validation
+as HTTPS origins. Publication should remain independent of docs deployments
+so routine renewal and website rollback cannot inadvertently revert metadata.
+
+When configuring that endpoint, preserve real 404 responses for missing files
+under the site's existing filesystem/404 routing. Serve fixed-name
+`timestamp.json` with `no-cache` or a very short `max-age`; serve numbered root,
+snapshot, and targets metadata with long-lived immutable caching. Never replace
+the contents of an already-published numbered file. Missing future versions
+must not acquire the immutable cache policy: a cached 404 must not delay a
+later root transition. Verify the response headers at the public endpoint as
+part of publication rehearsal. These routing/cache changes are planned;
+the site's Vercel configuration has not been changed for omega hosting yet.
+
 Use consistent snapshots, a fixed target name `bootstrap.json`, numbered
 root/targets/snapshot files, and content-hashed target objects. Upload immutable
 objects before changing `timestamp.json`. Retain every numbered root
@@ -258,6 +274,13 @@ steps 1–2 are implemented. The compiled public bundle/release-gate migration,
 node/CLI/dashboard adoption, runtime callbacks, transport checks, and operator
 commands remain pending. The [client reference](../internal/trust/bootstrap/README.md)
 records its supported storage platforms and exact validation boundaries.
+
+Native Windows public-client support is required before the TUF consumer
+cutover. The [Windows gate](public-network-plan.md#windows-public-client-gate)
+covers the complete storage backend, including ACL/account policy, ancestor
+paths, locking, durable replacement, and native Windows regression tests.
+The current unsupported-platform error is an interim implementation limit;
+Linux root-node deployment does not define the public CLI's platform scope.
 
 The spike does not close #195 or the related audit issues. It establishes a
 feasible library and trust lifecycle and identifies the integration work
