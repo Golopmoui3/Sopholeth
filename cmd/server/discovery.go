@@ -11,6 +11,7 @@ import (
 	"sopholeth/internal/discovery"
 	"sopholeth/internal/gossip"
 	"sopholeth/internal/logging"
+	"sopholeth/internal/trust/bootstrap"
 )
 
 func resolveOmegaBootstrap(ctx context.Context) (*discovery.Session, error) {
@@ -84,6 +85,13 @@ func configurePublicDiscovery(cn *cluster.ClusterNode, s *discovery.Session, id,
 	}
 	cn.SetRootProvider(func() bool { return s.IsRoot(id, origin, enclave) })
 	cn.SetSeedProvider(s.Seeds)
+	s.SetViewHandler(func(v bootstrap.View) {
+		bindings := make(map[gossip.NodeID]gossip.PeerBinding, len(v.Manifest.Roots))
+		for _, root := range v.Manifest.Roots {
+			bindings[gossip.NodeID(root.ID)] = gossip.PeerBinding{Origin: root.Origin, Enclave: v.Manifest.Enclave}
+		}
+		cn.SetRootBindings(bindings)
+	})
 	cn.ConfigureBootstrap(nil, publicSeedCheck(s))
 	return nil
 }

@@ -30,6 +30,7 @@ type Session struct {
 	mu      sync.RWMutex
 	view    bootstrap.View
 	lastErr error
+	onView  func(bootstrap.View)
 	now     func() time.Time
 	after   func(time.Duration) <-chan time.Time
 }
@@ -57,7 +58,26 @@ func Open(ctx context.Context, b bootstrap.Bundle, stateDir string, hc *http.Cli
 func (s *Session) set(v bootstrap.View) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.notifyView(v)
 	s.view = v
+}
+
+// SetViewHandler installs a local routing consumer and immediately supplies any
+// current view. It runs before a verified view becomes visible through Current.
+// Expiry/invalidation do not clear the consumer's last verified bindings. The
+// handler must not do I/O or call back into Session (it runs under the view lock).
+func (s *Session) SetViewHandler(handler func(bootstrap.View)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onView = handler
+	s.notifyView(s.view)
+}
+
+func (s *Session) notifyView(v bootstrap.View) {
+	if s.onView != nil && len(v.Manifest.Roots) != 0 && s.now().Before(v.Expires) {
+		v.Manifest.Roots = slices.Clone(v.Manifest.Roots)
+		s.onView(v)
+	}
 }
 
 func (s *Session) Current() (bootstrap.View, error) {
@@ -88,6 +108,7 @@ func (s *Session) Refresh(ctx context.Context) error {
 		}
 	}
 	s.mu.Lock()
+	s.notifyView(v)
 	s.view, s.lastErr = v, err
 	s.mu.Unlock()
 	return err

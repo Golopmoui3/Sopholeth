@@ -97,6 +97,12 @@ not a claim that public joining has been tested on deployed hosts.
 - Use signed HTTPS root origins without dropping their schemes, disabling
   certificate checks, or following redirects to an unapproved origin (#194).
   Checking an official bootstrap endpoint does not certify its peer referrals.
+- Pin listed root IDs to their verified origin/enclave throughout peer-table
+  updates. Only a later verified manifest can move those routes. Unsigned
+  bootstrap/SYNC cannot move an established ordinary peer either, and PONG
+  cannot change its enclave. This addresses the route-replacement part of
+  #211; peer admission stays open and the broader liveness/resource cases
+  remain follow-up work.
 - Preserve rollback protection, cached discovery within its validity, runtime
   expiry, and retry backoff (#160, #193, #172). Expired metadata must not keep
   authorizing an official root role or bootstrap seed. Ordinary peer membership

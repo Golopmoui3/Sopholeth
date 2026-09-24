@@ -25,6 +25,11 @@ func TestRuntimeExpiryAndRetry(t *testing.T) {
 	v := bootstrap.View{Expires: base.Add(time.Second), Manifest: bootstrap.Manifest{Enclave: "default", Roots: []bootstrap.Root{{ID: "one", Origin: "https://one.invalid"}}}}
 	started, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 	s := &Session{view: v, now: now}
+	var delivered []bootstrap.View
+	s.SetViewHandler(func(v bootstrap.View) { delivered = append(delivered, v) })
+	if len(delivered) != 1 {
+		t.Fatal("initial verified routing view not delivered")
+	}
 	s.source = fakeSource{refresh: func(context.Context) (bootstrap.View, error) {
 		close(started)
 		<-release
@@ -39,6 +44,10 @@ func TestRuntimeExpiryAndRetry(t *testing.T) {
 	close(release)
 	if err := <-done; err == nil {
 		t.Fatal("lost refresh error")
+	}
+	s.set(bootstrap.View{}) // A durable checkpoint also withdraws the view.
+	if len(delivered) != 1 {
+		t.Fatal("expiry/invalidation cleared last verified routing bindings")
 	}
 
 	// A failed refresh waits only the backoff, without another hourly delay.
@@ -72,6 +81,9 @@ func TestRuntimeExpiryAndRetry(t *testing.T) {
 	}
 	if !s.IsRoot("one", "https://one.invalid", "default") || len(s.Seeds()) != 1 {
 		t.Fatal("valid renewal did not restore role/seeds")
+	}
+	if len(delivered) != 2 || delivered[1].Expires != v.Expires {
+		t.Fatal("verified renewal not delivered to routing consumer")
 	}
 	if s.IsRoot("other", "https://one.invalid", "default") || s.IsRoot("one", "http://one.invalid", "default") {
 		t.Fatal("root recognized without matching signed ID and origin")

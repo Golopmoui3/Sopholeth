@@ -127,7 +127,8 @@ const maxSeenMessages = 100000
 type Protocol struct {
 	localNode         *Node
 	peers             map[NodeID]*Node
-	peerFailures      map[NodeID]int // consecutive ping failures per peer
+	peerFailures      map[NodeID]int         // consecutive ping failures per peer
+	rootBindings      map[NodeID]PeerBinding // last verified root routes, independent of role expiry
 	peersMutex        sync.RWMutex
 	replicationFactor int
 	quorumSize        int
@@ -218,24 +219,44 @@ func (p *Protocol) Stop() error {
 	return nil
 }
 
-// addPeer adds node to the peer set or rejects and warns if node is self.
-// Returns true if the node was added or updated, false if rejected.
-//
-// The self-rejection is the single chokepoint that keeps self out of the
-// peer map across all entry points (handleSync, HandleBootstrap,
-// performTopologySync, etc.). Callers that previously assumed
-// "addPeer always succeeds" are still correct for non-self inputs;
-// the warn log surfaces any caller path that ends up trying to add self,
-// which is always a bug (#82, #87).
+// addPeer accepts new peers and unchanged advertisements. Unsigned referrals
+// cannot move an established peer or contradict a signed root binding, even
+// when that root has not joined (or has been evicted).
 func (p *Protocol) addPeer(node *Node) bool {
+	if node == nil || node.ID == "" {
+		return false
+	}
 	if node.ID == p.localNode.ID {
 		logging.Warn("[%s] addPeer rejected: attempted to add self (%s) — caller likely missing a self-filter",
 			p.localNode.ID, node.ID)
 		return false
 	}
 
+	copy := *node
+	if copy.Enclave == "" {
+		copy.Enclave = "default"
+	}
+	origin, err := copy.Origin()
+	if err != nil {
+		return false
+	}
+	binding := PeerBinding{Origin: origin, Enclave: copy.Enclave}
 	p.peersMutex.Lock()
-	p.peers[node.ID] = node
+	if root, pinned := p.rootBindings[node.ID]; pinned && root != binding {
+		p.peersMutex.Unlock()
+		logging.Warn("[%s] Rejected peer %s: advertisement conflicts with signed root", p.localNode.ID, node.ID)
+		return false
+	}
+	if existing := p.peers[node.ID]; existing != nil {
+		existingOrigin, _ := existing.Origin()
+		matches := existingOrigin == origin && existing.Enclave == copy.Enclave
+		p.peersMutex.Unlock()
+		if !matches {
+			logging.Warn("[%s] Rejected peer %s: advertisement changes established route or enclave", p.localNode.ID, node.ID)
+		}
+		return matches
+	}
+	p.peers[node.ID] = &copy
 	delete(p.peerFailures, node.ID) // reset failure counter on (re-)add
 	peerCount := len(p.peers)
 	p.peersMutex.Unlock()
@@ -315,20 +336,12 @@ func (p *Protocol) handlePing(msg *Message) error {
 }
 
 func (p *Protocol) handlePong(msg *Message) error {
-	p.peersMutex.Lock()
-	// Reset failure counter — peer is alive
-	delete(p.peerFailures, msg.From)
-
-	// Update peer's enclave membership if included
-	if msg.NodeInfo != nil {
-		if msg.NodeInfo.Enclave == "" {
-			msg.NodeInfo.Enclave = "default"
-		}
-		if existing, ok := p.peers[msg.NodeInfo.ID]; ok && existing.Enclave != msg.NodeInfo.Enclave {
-			existing.Enclave = msg.NodeInfo.Enclave
-			logging.Debug("[%s] Updated peer %s enclave to %s via PONG", p.localNode.ID, msg.NodeInfo.ID, msg.NodeInfo.Enclave)
-		}
+	if msg.NodeInfo != nil && msg.NodeInfo.ID != msg.From {
+		return fmt.Errorf("PONG node ID does not match sender")
 	}
+	p.peersMutex.Lock()
+	// PONG is only a liveness hint. It cannot update routing or enclave data.
+	delete(p.peerFailures, msg.From)
 	p.peersMutex.Unlock()
 	return nil
 }
@@ -339,33 +352,13 @@ func (p *Protocol) handleSync(msg *Message) error {
 	// SYNC messages carry information about a node (either the sender
 	// introducing itself, or a peer propagating knowledge of a third node).
 	if msg.NodeInfo != nil {
-		// Normalize empty enclave to "default" (backwards compat with pre-enclave nodes)
-		if msg.NodeInfo.Enclave == "" {
-			msg.NodeInfo.Enclave = "default"
-		}
-
 		// Don't add ourselves as a peer
 		if msg.NodeInfo.ID == p.localNode.ID {
 			return nil
 		}
 
-		// Check if we already know this peer
-		p.peersMutex.RLock()
-		existing, exists := p.peers[msg.NodeInfo.ID]
-		p.peersMutex.RUnlock()
-
-		if !exists {
-			p.addPeer(msg.NodeInfo)
-			logging.Info("[%s] Learned about new peer %s (enclave: %s) via SYNC from %s",
-				p.localNode.ID, msg.NodeInfo.ID, msg.NodeInfo.Enclave, msg.From)
-		} else if existing.Enclave != msg.NodeInfo.Enclave {
-			// Update enclave if it changed (e.g., node upgraded and now reports enclave)
-			p.addPeer(msg.NodeInfo)
-			logging.Info("[%s] Updated peer %s enclave: %s → %s (via SYNC from %s)",
-				p.localNode.ID, msg.NodeInfo.ID, existing.Enclave, msg.NodeInfo.Enclave, msg.From)
-		} else {
-			logging.Debug("[%s] Already know peer %s (SYNC from %s)",
-				p.localNode.ID, msg.NodeInfo.ID, msg.From)
+		if !p.addPeer(msg.NodeInfo) {
+			return fmt.Errorf("rejected peer advertisement for %s", msg.NodeInfo.ID)
 		}
 	} else {
 		logging.Debug("[%s] SYNC message from %s has no NodeInfo", p.localNode.ID, msg.From)

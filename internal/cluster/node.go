@@ -251,6 +251,12 @@ func (cn *ClusterNode) IsRoot() bool {
 // membership. Configure it before Start, alongside the recovery seed provider.
 func (cn *ClusterNode) SetRootProvider(provider func() bool) { cn.rootProvider = provider }
 
+// SetRootBindings updates routing pins from verified discovery, independently
+// of the expiring root role and bootstrap seed providers.
+func (cn *ClusterNode) SetRootBindings(bindings map[gossip.NodeID]gossip.PeerBinding) {
+	cn.protocol.SetRootBindings(bindings)
+}
+
 // SetHTTPOrigin sets the externally reachable API/gossip origin before Start.
 // Listener ports may differ when a TLS proxy fronts the node.
 func (cn *ClusterNode) SetHTTPOrigin(origin string) { cn.localNode.HTTPOrigin = origin }

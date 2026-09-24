@@ -17,6 +17,20 @@ step, and writes remain anonymous. Peer IDs and advertised origins are routing
 information; referrals are not certified identities or trusted voters. Existing
 peer traffic and payload TTLs continue independently of discovery expiration.
 
+For listed root IDs, the node pins the origin and enclave from verified
+discovery, including roots it has not contacted yet. Bootstrap requests,
+bootstrap referrals, and SYNC cannot contradict those bindings. A new verified
+manifest can move a root's route. Pins survive expiry and failed refreshes;
+the official role and seeds still require a current valid view. Removing a root
+from the manifest leaves any established ordinary peer entry in place.
+
+Unsigned advertisements also cannot change an established ordinary peer's
+origin or enclave. PONG supplies a liveness hint only, never a route update.
+An ordinary node moving endpoints or enclaves should use a fresh node ID, or
+wait for the old entry to be evicted before rejoining. Ordinary IDs remain
+unauthenticated first claims after eviction or restart; this protects existing
+routes without certifying joiners or adding admission requirements.
+
 The [trust client reference](../internal/trust/bootstrap/README.md) specifies
 bundle/manifest formats, rollback protection, supported filesystems, and
 rotation behavior. [Omega operations](omega-operations.md) describes custody,
@@ -136,6 +150,7 @@ until valid discovery returns; it does not select an unverified endpoint.
 
 Local fixtures cover actual omega publication through TUF discovery, saved CLI
 profile refresh, HTTPS bootstrap and gossip to an ordinary unlisted node,
+root/ordinary peer route-substitution rejection and signed root-route updates,
 certificate/hostname and redirect rejection, runtime expiry during a stalled
 refresh, retry scheduling, and viewer stream withdrawal/reconnection. Existing
 trust tests cover signatures, rotation, rollback, and durable writes.
