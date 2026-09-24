@@ -69,9 +69,12 @@ been created, and the three roots are not deployed.
 
 ### 1. Remove the known startup/recovery loop
 
-Start with [#150](https://github.com/TickTockBent/Sopholeth/issues/150): stop the
-self-sustaining SYNC exchange between under-peered nodes. This is the next code
-slice and makes a two-survivor test meaningful.
+The [#150](https://github.com/TickTockBent/Sopholeth/issues/150) fix separates
+explicit `SYNC_REQUEST` messages from one-way `SYNC` announcements. Two
+under-peered nodes now finish their exchange, and later requests still discover
+new peers. The regression exercises repeated recovery ticks and HTTP discovery.
+This prerequisite is implemented; the next code slice is discovery integration
+in step 2. Deploy matching builds because older nodes lack the request type.
 
 Do not make the entire replication/peer audit a dependency of first deployment.
 Existing replication is sufficient to start with a small healthy-network test;

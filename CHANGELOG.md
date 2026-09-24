@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Replication
+
+- Stop under-peered nodes from exchanging peer lists indefinitely (#150).
+  `SYNC_REQUEST` explicitly requests topology; `SYNC` remains a one-way peer
+  announcement. HTTP and WebSocket paths carry the request type. Upgrade nodes
+  together because older builds do not understand the new request type.
+
 ### Public discovery
 
 - Give newly created public repositories the operational account's ownership,

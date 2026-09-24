@@ -172,6 +172,24 @@ func TestBootstrapPeerDiscovery(t *testing.T) {
 	if node2Peers[0].ID != "node1" {
 		t.Fatalf("node2 expected peer 'node1', got '%s'", node2Peers[0].ID)
 	}
+
+	// Only node2 has learned this referral. Request its peer list over the
+	// real HTTP transport to exercise wire decoding and cluster dispatch.
+	referral := &gossip.Node{ID: "node3", Address: "127.0.0.1", HTTPPort: 8080, Enclave: "default"}
+	if err := node2.node.HandleGossipMessage(&gossip.Message{
+		Type: gossip.MessageTypeSync, From: "node1", NodeInfo: referral,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := node1.node.protocol.Send(ctx, node2.node.localNode, &gossip.Message{
+		Type: gossip.MessageTypeSyncRequest, From: "node1",
+		MessageID: "request-peers", Timestamp: time.Now(), NodeInfo: node1.node.localNode,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if peers := node1.node.Topology(); len(peers) != 2 {
+		t.Fatalf("node1 did not learn node3 through HTTP SYNC: %v", peers)
+	}
 }
 
 func TestWriteReplicationAndQuorum(t *testing.T) {

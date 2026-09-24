@@ -237,56 +237,76 @@ func gaugeValue(g interface{ Write(*dto.Metric) error }) float64 {
 
 // --- Topology Sync Tests ---
 
-func TestSyncPropagatesPeerList(t *testing.T) {
-	// Node A knows B but not C. When A sends SYNC to B, B should respond
-	// with SYNC messages containing C's info so A can discover C.
-	nodeC := &Node{ID: "node-c", Address: "c", Port: 9090, HTTPPort: 8080, Enclave: "default"}
-
-	// Set up protocol for node B (the responder)
-	localB := &Node{ID: "node-b", Address: "b", Port: 9090, HTTPPort: 8080, Enclave: "default"}
-	protocolB := NewProtocol(localB, 3, "")
-	mtB := newMockTransport()
-	protocolB.SetTransport(mtB)
-
-	// B knows A and C
-	nodeA := &Node{ID: "node-a", Address: "a", Port: 9090, HTTPPort: 8080, Enclave: "default"}
-	protocolB.addPeer(nodeA)
-	protocolB.addPeer(nodeC)
-
-	// A sends a SYNC to B (introducing itself)
-	syncMsg := &Message{
-		Type:      MessageTypeSync,
-		From:      "node-a",
-		Timestamp: time.Now(),
-		MessageID: "sync-1",
-		NodeInfo:  nodeA, // From == NodeInfo.ID, so this is a direct SYNC
+func TestTopologySyncConvergesWithoutReplyLoop(t *testing.T) {
+	// Two RF=3 nodes remain under-peered, as after losing a third root.
+	// Deliver every outgoing message back through the other protocol so a
+	// response that accidentally requests another response cannot go unnoticed.
+	nodeA := &Node{ID: "node-a", Address: "a", HTTPPort: 8080, Enclave: "default"}
+	nodeB := &Node{ID: "node-b", Address: "b", HTTPPort: 8080, Enclave: "default"}
+	protocols := map[NodeID]*Protocol{}
+	transports := map[NodeID]*mockTransport{}
+	for _, node := range []*Node{nodeA, nodeB} {
+		p := NewProtocol(node, 3, "")
+		mt := newMockTransport()
+		p.SetTransport(mt)
+		protocols[node.ID], transports[node.ID] = p, mt
 	}
+	protocols[nodeA.ID].addPeer(nodeB)
+	protocols[nodeB.ID].addPeer(nodeA)
 
-	if err := protocolB.handleSync(syncMsg); err != nil {
-		t.Fatalf("handleSync error: %v", err)
-	}
-
-	// B should have sent SYNC responses back to A with info about:
-	// - node-b (itself)
-	// - node-c (peer that A might not know)
-	// It should NOT send info about node-a back to node-a.
-	sent := mtB.getSentMessages()
-
-	nodeInfosSent := make(map[NodeID]bool)
-	for _, sm := range sent {
-		if sm.To == "node-a" && sm.Msg.Type == MessageTypeSync && sm.Msg.NodeInfo != nil {
-			nodeInfosSent[sm.Msg.NodeInfo.ID] = true
+	delivered := map[NodeID]int{}
+	drain := func() int {
+		t.Helper()
+		count := 0
+		for {
+			progress := false
+			for id, mt := range transports {
+				for _, sent := range mt.getSentMessages()[delivered[id]:] {
+					if count == 16 {
+						t.Fatal("SYNC exchange did not terminate within 16 messages")
+					}
+					delivered[id]++
+					count++
+					progress = true
+					if err := protocols[sent.To].HandleMessage(sent.Msg); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if !progress {
+				return count
+			}
 		}
 	}
 
-	if !nodeInfosSent["node-b"] {
-		t.Error("B should have sent its own info to A")
+	// Each tick is one request and one terminal self-announcement. A later
+	// tick must still work: suppressing all subsequent discovery is no fix.
+	for _, id := range []NodeID{nodeA.ID, nodeB.ID, nodeA.ID} {
+		protocols[id].performTopologySync(context.Background())
+		if count := drain(); count != 2 {
+			t.Fatalf("two-node SYNC exchanged %d messages, want 2", count)
+		}
 	}
-	if !nodeInfosSent["node-c"] {
-		t.Error("B should have sent C's info to A")
+
+	// B learns C; A's next request must discover C as well as B itself.
+	nodeC := &Node{ID: "node-c", Address: "c", HTTPPort: 8080, Enclave: "default"}
+	protocols[nodeB.ID].addPeer(nodeC)
+	protocols[nodeA.ID].performTopologySync(context.Background())
+	if count := drain(); count != 3 {
+		t.Fatalf("peer discovery exchanged %d messages, want 3", count)
 	}
-	if nodeInfosSent["node-a"] {
-		t.Error("B should NOT have sent A's info back to A")
+	peers := protocols[nodeA.ID].GetPeers()
+	if len(peers) != 2 {
+		t.Fatalf("A has %d peers, want B and C", len(peers))
+	}
+	for _, peer := range peers {
+		if peer.ID != nodeB.ID && peer.ID != nodeC.ID {
+			t.Fatalf("A learned unexpected peer %s", peer.ID)
+		}
+	}
+	protocols[nodeA.ID].performTopologySync(context.Background())
+	if count := drain(); count != 0 {
+		t.Fatalf("fully peered node sent %d messages, want none", count)
 	}
 }
 

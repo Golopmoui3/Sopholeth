@@ -34,17 +34,16 @@ gossip, and writes have no authenticated author. Omega endorses bootstrap
 entry points. Peer bookkeeping and observed replication counts do not imply
 controlled admission, trusted voters, or consensus.
 
-The next work is:
+The SYNC-storm fix (#150) is implemented: explicit peer-list requests receive
+one-way announcements that cannot trigger another reply. The remaining work is:
 
-1. Fix the under-peered SYNC storm (#150), which interferes with ordinary
-   startup and root-loss tests.
-2. Connect nodes and the Linux CLI to the existing HTTPS trust client and
+1. Connect nodes and the Linux CLI to the existing HTTPS trust client and
    bundle, including authenticated bootstrap origins, expiry, cached fallback,
    and saved-profile refresh. Preserve the existing anonymous data path.
-3. Write the actual host/DNS/TLS/service runbook and deploy three roots from a
+2. Write the actual host/DNS/TLS/service runbook and deploy three roots from a
    reviewed, tested commit. Reuse omega's implemented custody and renewal
    procedures. Record shared failure domains if roots share a host.
-4. Verify put/get/list, healthy replication, TTL expiration, and an additional
+3. Verify put/get/list, healthy replication, TTL expiration, and an additional
    node joining without approval. Then use the running network to test root
    loss, slow peers, restarts, capacity, and remaining audit findings.
 
