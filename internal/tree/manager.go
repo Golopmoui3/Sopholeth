@@ -331,6 +331,7 @@ func (m *Manager) attach(ctx context.Context, conn *ws.Connection, timeout time.
 		Enclave:      m.local.Enclave,
 		Address:      m.local.Address,
 		HTTPPort:     m.local.HTTPPort,
+		HTTPOrigin:   m.local.HTTPOrigin,
 		Capabilities: ws.Capabilities{Inbound: string(m.opts.Inbound)},
 	}
 	// Install the temporary handlers BEFORE sending hello — a fast substrate
@@ -753,10 +754,11 @@ func (m *Manager) getAlternativeSubstrates(enclave string) []ws.AlternativeParen
 	out := make([]ws.AlternativeParent, 0, len(candidates))
 	for _, p := range candidates {
 		out = append(out, ws.AlternativeParent{
-			ID:       string(p.ID),
-			Address:  p.Address,
-			HTTPPort: p.HTTPPort,
-			Enclave:  p.Enclave,
+			ID:         string(p.ID),
+			Address:    p.Address,
+			HTTPPort:   p.HTTPPort,
+			HTTPOrigin: p.HTTPOrigin,
+			Enclave:    p.Enclave,
 		})
 	}
 	return out
@@ -815,11 +817,12 @@ func buildWelcomeTopology(peers []*gossip.Node, local *gossip.Node) []gossip.Sim
 			Timestamp: now,
 			MessageID: "",
 			NodeInfo: &gossip.SimpleNodeInfo{
-				ID:       string(n.ID),
-				Address:  n.Address,
-				Port:     n.Port,
-				HTTPPort: n.HTTPPort,
-				Enclave:  n.Enclave,
+				ID:         string(n.ID),
+				Address:    n.Address,
+				Port:       n.Port,
+				HTTPPort:   n.HTTPPort,
+				HTTPOrigin: n.HTTPOrigin,
+				Enclave:    n.Enclave,
 			},
 		})
 	}
@@ -840,10 +843,11 @@ func buildAltsFromTopology(topology []gossip.SimpleMessage, selfID string) []ws.
 			continue
 		}
 		out = append(out, ws.AlternativeParent{
-			ID:       sync.NodeInfo.ID,
-			Address:  sync.NodeInfo.Address,
-			HTTPPort: sync.NodeInfo.HTTPPort,
-			Enclave:  sync.NodeInfo.Enclave,
+			ID:         sync.NodeInfo.ID,
+			Address:    sync.NodeInfo.Address,
+			HTTPPort:   sync.NodeInfo.HTTPPort,
+			HTTPOrigin: sync.NodeInfo.HTTPOrigin,
+			Enclave:    sync.NodeInfo.Enclave,
 		})
 	}
 	return out

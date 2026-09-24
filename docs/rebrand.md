@@ -35,7 +35,7 @@ directories are not migrated automatically.
 | MCP tool IDs | `store`, `retrieve`, `exists`, `list_keys` |
 | Metrics | `gossip_*`, `http_*`, `discovery_*`; dashboard metrics remain `dashboard_*` |
 | HTTP gossip and bootstrap authentication | `X-Gossip-Signature` |
-| Node discovery cache | `$HOME/.sopholeth/cache`; override with `NODE_CACHE_DIR` |
+| Node discovery state | `$HOME/.sopholeth/state`; override with `NODE_STATE_DIR` (HTTPS/TUF migration) |
 | Dashboard state | `$HOME/.local/state/sopholeth/dashboard` |
 | Burn-in state | `$HOME/.local/state/sopholeth/burnin` |
 | Local container image | `sopholeth/node:local`; burn-in image `sopholeth/node:burnin` |

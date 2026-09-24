@@ -19,7 +19,8 @@ import (
 	"time"
 
 	"sopholeth/internal/client"
-	"sopholeth/internal/trust"
+	"sopholeth/internal/discovery"
+	"sopholeth/internal/trust/bootstrap"
 )
 
 // Exit codes. Scripts can branch on these; see docs/cli.md.
@@ -42,9 +43,9 @@ type app struct {
 	stderr io.Writer
 	getenv func(string) string
 
-	// publicDiscovery resolves the verified public root list. Tests inject
-	// a fake; the real one uses the compiled omega key and DNS.
-	publicDiscovery func(ctx context.Context) (*trust.SignedList, error)
+	// Tests may replace the discovery boundary. Production uses the bundled
+	// TUF authority and persistent rollback state beside the selected config.
+	publicDiscovery func(context.Context, bool) (discovery.Identity, bootstrap.View, error)
 
 	// newHTTPClient builds the transport. Tests may substitute an
 	// httptest client.
@@ -69,12 +70,11 @@ func runMain() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	a := &app{
-		stdin:           os.Stdin,
-		stdout:          os.Stdout,
-		stderr:          os.Stderr,
-		getenv:          os.Getenv,
-		publicDiscovery: realPublicDiscovery,
-		newHTTPClient:   func() *http.Client { return &http.Client{} },
+		stdin:         os.Stdin,
+		stdout:        os.Stdout,
+		stderr:        os.Stderr,
+		getenv:        os.Getenv,
+		newHTTPClient: func() *http.Client { return &http.Client{} },
 	}
 	return a.run(ctx, os.Args[1:])
 }

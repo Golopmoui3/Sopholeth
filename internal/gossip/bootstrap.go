@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"sopholeth/internal/endpoint"
 	"sopholeth/internal/logging"
 )
 
@@ -17,6 +18,7 @@ type BootstrapRequest struct {
 	Address    string `json:"address"`
 	GossipPort int    `json:"gossip_port"`
 	HTTPPort   int    `json:"http_port"`
+	HTTPOrigin string `json:"http_origin,omitempty"`
 	Enclave    string `json:"enclave,omitempty"` // Empty treated as "default"
 }
 
@@ -44,6 +46,7 @@ func (p *Protocol) Bootstrap(ctx context.Context, seedNodes []string) error {
 		Address:    p.localNode.Address,
 		GossipPort: p.localNode.Port,
 		HTTPPort:   p.localNode.HTTPPort,
+		HTTPOrigin: p.localNode.HTTPOrigin,
 		Enclave:    p.localNode.Enclave,
 	}
 
@@ -52,12 +55,16 @@ func (p *Protocol) Bootstrap(ctx context.Context, seedNodes []string) error {
 	// Skip self-bootstrap: it succeeds (we'd be POSTing to our own listener)
 	// but pollutes our peer map with self until #87's addPeer self-filter
 	// rejects it. Skipping here also avoids a wasted round-trip.
-	selfAdvertised := fmt.Sprintf("%s:%d", p.localNode.Address, p.localNode.HTTPPort)
+	selfAdvertised, _ := p.localNode.Origin()
 
 	seen := make(map[NodeID]struct{})
 	successfulSeeds := 0
 
 	for _, seed := range seedNodes {
+		seed, err := endpoint.Normalize(seed)
+		if err != nil {
+			return err
+		}
 		if seed == selfAdvertised {
 			logging.Debug("[%s] Skipping self in seed list (%s)", p.localNode.ID, seed)
 			continue
@@ -72,7 +79,7 @@ func (p *Protocol) Bootstrap(ctx context.Context, seedNodes []string) error {
 		successfulSeeds++
 
 		for _, peer := range peers {
-			if peer.ID == p.localNode.ID {
+			if peer == nil || peer.ID == p.localNode.ID {
 				continue
 			}
 			if _, dup := seen[peer.ID]; dup {
@@ -100,7 +107,16 @@ func (p *Protocol) sendBootstrapRequest(ctx context.Context, seedAddr string, re
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("http://%s/v1/bootstrap", seedAddr)
+	origin, err := endpoint.Normalize(seedAddr)
+	if err != nil {
+		return nil, err
+	}
+	if p.checkSeed != nil {
+		if err := p.checkSeed(origin, nil); err != nil {
+			return nil, err
+		}
+	}
+	url := origin + "/v1/bootstrap"
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -110,7 +126,11 @@ func (p *Protocol) sendBootstrapRequest(ctx context.Context, seedAddr string, re
 		httpReq.Header.Set(SignatureHeader, SignBody(p.clusterSecret, jsonData))
 	}
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client, err := endpoint.Client(p.bootstrapClient)
+	if err != nil {
+		return nil, err
+	}
+	client.Timeout = 5 * time.Second
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
@@ -129,6 +149,14 @@ func (p *Protocol) sendBootstrapRequest(ctx context.Context, seedAddr string, re
 	if !bootstrapResp.Success {
 		return nil, fmt.Errorf("bootstrap failed")
 	}
+	if p.checkSeed != nil {
+		if err := p.checkSeed(origin, bootstrapResp.Peers); err != nil {
+			return nil, err
+		}
+		if len(bootstrapResp.Peers) == 0 {
+			return nil, fmt.Errorf("bootstrap response omitted its root")
+		}
+	}
 
 	return bootstrapResp.Peers, nil
 }
@@ -141,11 +169,12 @@ func (p *Protocol) HandleBootstrap(req *BootstrapRequest) *BootstrapResponse {
 		enclave = "default"
 	}
 	newNode := &Node{
-		ID:       NodeID(req.NodeID),
-		Address:  req.Address,
-		Port:     req.GossipPort,
-		HTTPPort: req.HTTPPort,
-		Enclave:  enclave,
+		ID:         NodeID(req.NodeID),
+		Address:    req.Address,
+		Port:       req.GossipPort,
+		HTTPPort:   req.HTTPPort,
+		HTTPOrigin: req.HTTPOrigin,
+		Enclave:    enclave,
 	}
 
 	// Add the new node as a peer. addPeer is a no-op when newNode.ID

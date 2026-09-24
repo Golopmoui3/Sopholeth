@@ -21,25 +21,31 @@ import (
 )
 
 func (a *app) serveEndpoint(override string) (string, error) {
+	n, err := a.serveSelection(context.Background(), override)
+	return n.Endpoint, err
+}
+
+func (a *app) serveSelection(ctx context.Context, override string) (Network, error) {
 	if override != "" {
 		endpoint, err := client.NormalizeEndpoint(override)
 		if err != nil {
-			return "", usagef("%v", err)
+			return Network{}, usagef("%v", err)
 		}
-		return endpoint, nil
+		return Network{Endpoint: endpoint}, nil
 	}
 	cfg, err := a.loadConfig()
 	if err != nil {
-		return "", err
+		return Network{}, err
 	}
 	if a.networkFlag == "" && a.getenv("SOPH_NETWORK") == "" && cfg.Current == "" {
-		return client.NormalizeEndpoint("localhost")
+		endpoint, err := client.NormalizeEndpoint("localhost")
+		return Network{Endpoint: endpoint}, err
 	}
-	_, network, err := a.selectNetwork(cfg)
+	_, n, _, err := a.connect(ctx)
 	if err != nil {
-		return "", err
+		return Network{}, err
 	}
-	return network.Endpoint, nil
+	return *n, nil
 }
 
 func (a *app) cmdServe(ctx context.Context, args []string) error {
@@ -62,10 +68,11 @@ func (a *app) cmdServe(ctx context.Context, args []string) error {
 	if *bind == "" {
 		return usagef("--bind must not be empty")
 	}
-	endpoint, err := a.serveEndpoint(*node)
+	selected, err := a.serveSelection(ctx, *node)
 	if err != nil {
 		return err
 	}
+	endpoint := selected.Endpoint
 	health, err := a.probe(ctx, endpoint)
 	if err != nil {
 		return err
@@ -99,9 +106,25 @@ func (a *app) cmdServe(ctx context.Context, args []string) error {
 			fmt.Fprintf(a.stderr, "could not open browser: %v; use the link above\n", err)
 		}
 	}
-	target, _ := url.Parse(endpoint) // Endpoint selection already validated this URL.
+	ctx, stopViewer := context.WithCancel(ctx)
+	defer stopViewer()
+	lease := &viewerLease{}
+	lease.set(ctx, selected)
+	defer lease.clear()
+	if selected.Discovery == discoveryHTTPS {
+		done := make(chan struct{})
+		go func() { defer close(done); a.refreshViewer(ctx, lease, selected) }()
+		defer func() { stopViewer(); <-done }()
+	}
+	hc := a.newHTTPClient()
+	if selected.Discovery == discoveryHTTPS {
+		hc, err = a.verifiedHTTPClient()
+		if err != nil {
+			return err
+		}
+	}
 	server := &http.Server{
-		Handler:           serveViewerHandler(target, *query),
+		Handler:           serveViewerHandlerWithLease(lease.current, *query, hc.Transport),
 		ReadHeaderTimeout: 5 * time.Second,
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
@@ -128,19 +151,18 @@ func (a *app) cmdServe(ctx context.Context, args []string) error {
 // serveViewerHandler exposes only the reads used by the viewer, to the node
 // selected at startup. A browser cannot change the upstream through a request.
 func serveViewerHandler(target *url.URL, query string) http.Handler {
+	return serveViewerHandlerWithLease(func() (*url.URL, context.Context, error) { return target, context.Background(), nil }, query, nil)
+}
+
+func serveViewerHandlerWithLease(current func() (*url.URL, context.Context, error), query string, transport http.RoundTripper) http.Handler {
 	assets := sites.StreamHandler()
 	proxy := &httputil.ReverseProxy{
-		Rewrite: func(r *httputil.ProxyRequest) {
-			r.SetURL(target)
-			r.Out.URL.RawQuery = ""
-			// The outer proxy's cookies and credentials belong to the viewer
-			// host, not the node. Forward only the viewer's content preference.
-			r.Out.Header = make(http.Header)
-			r.Out.Header.Set("Accept", r.In.Header.Get("Accept"))
-			r.Out.Header.Set("User-Agent", client.UserAgent)
-		},
+		Transport:     transport,
 		FlushInterval: -1,
 		ModifyResponse: func(r *http.Response) error {
+			if r.StatusCode >= 300 && r.StatusCode < 400 {
+				return fmt.Errorf("node redirect refused")
+			}
 			r.Header.Set("Cache-Control", "no-store")
 			r.Header.Set("X-Accel-Buffering", "no")
 			r.Header.Del("Set-Cookie")
@@ -155,6 +177,11 @@ func serveViewerHandler(target *url.URL, query string) http.Handler {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 				return
 			}
+			target, _, err := current()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusServiceUnavailable)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Cache-Control", "no-store")
 			w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -167,7 +194,24 @@ func serveViewerHandler(target *url.URL, query string) http.Handler {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 				return
 			}
-			proxy.ServeHTTP(w, r)
+			target, leaseCtx, err := current()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusServiceUnavailable)
+				return
+			}
+			requestCtx, cancel := context.WithCancel(r.Context())
+			stop := context.AfterFunc(leaseCtx, cancel)
+			defer stop()
+			defer cancel()
+			selectedProxy := *proxy
+			selectedProxy.Rewrite = func(req *httputil.ProxyRequest) {
+				req.SetURL(target)
+				req.Out.URL.RawQuery = ""
+				req.Out.Header = make(http.Header)
+				req.Out.Header.Set("Accept", req.In.Header.Get("Accept"))
+				req.Out.Header.Set("User-Agent", client.UserAgent)
+			}
+			selectedProxy.ServeHTTP(w, r.WithContext(requestCtx))
 		default:
 			assets.ServeHTTP(w, r)
 		}

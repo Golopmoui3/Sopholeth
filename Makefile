@@ -37,7 +37,7 @@ test:
 # record, not from the same checkout being verified. Empty is an error.
 check-public-release: export OMEGA_EXPECTED_SHA256 := $(OMEGA_EXPECTED_SHA256)
 check-public-release:
-	go test ./internal/trust -run '^TestPublicReleaseAnchor$$' -count=1
+	go test ./internal/discovery -run '^TestPublicReleaseBundle$$' -count=1
 
 clean:
 	go clean

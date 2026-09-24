@@ -1,5 +1,5 @@
 // Package bootstrap implements authenticated HTTPS bootstrap discovery.
-// It is the TUF integration layer for the forthcoming soph omega workflow;
+// It is the TUF integration layer used by soph omega and discovery consumers;
 // callers must explicitly supply a public trust bundle and private state path.
 package bootstrap
 

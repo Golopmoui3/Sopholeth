@@ -5,12 +5,16 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"net"
+	"net/http"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"sopholeth/internal/endpoint"
 	"sopholeth/internal/logging"
 )
 
@@ -55,15 +59,25 @@ func newClusterMetrics() *clusterMetrics {
 type NodeID string
 
 type Node struct {
-	ID       NodeID `json:"id"`
-	Address  string `json:"address"`
-	Port     int    `json:"port"`      // Gossip port
-	HTTPPort int    `json:"http_port"` // HTTP API port
-	Enclave  string `json:"enclave"`   // Replication boundary (default: "default")
+	ID         NodeID `json:"id"`
+	Address    string `json:"address"`
+	Port       int    `json:"port"`      // Gossip port
+	HTTPPort   int    `json:"http_port"` // HTTP API port
+	HTTPOrigin string `json:"http_origin,omitempty"`
+	Enclave    string `json:"enclave"` // Replication boundary (default: "default")
 }
 
 func (n *Node) String() string {
 	return fmt.Sprintf("%s@%s:%d", n.ID, n.Address, n.Port)
+}
+
+// Origin is a routing address, not a membership credential. An explicit HTTPS
+// origin must never be replaced by an inferred http://address:port URL.
+func (n *Node) Origin() (string, error) {
+	if n.HTTPOrigin != "" {
+		return endpoint.Normalize(n.HTTPOrigin)
+	}
+	return endpoint.Normalize(net.JoinHostPort(n.Address, strconv.Itoa(n.HTTPPort)))
 }
 
 type Message struct {
@@ -120,6 +134,8 @@ type Protocol struct {
 	clusterSecret     string
 	messageHandler    func(*Message) error
 	transport         Transport
+	bootstrapClient   *http.Client
+	checkSeed         func(string, []*Node) error
 	topologyTicker    *time.Ticker
 	stopChan          chan struct{}
 	metrics           *clusterMetrics      // nil in tests (skip metrics)
@@ -132,6 +148,12 @@ type Transport interface {
 	Stop() error
 	Send(ctx context.Context, node *Node, msg *Message) error
 	SetMessageHandler(handler func(*Message) error)
+}
+
+// ConfigureBootstrap installs optional transport and signed-root checks before
+// Start. Peer referrals remain ordinary routing information, not credentials.
+func (p *Protocol) ConfigureBootstrap(client *http.Client, check func(string, []*Node) error) {
+	p.bootstrapClient, p.checkSeed = client, check
 }
 
 func NewProtocol(localNode *Node, replicationFactor int, clusterSecret string) *Protocol {

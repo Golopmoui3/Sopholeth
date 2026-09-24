@@ -5,9 +5,9 @@ encrypted TUF authorities, unattended renewal, online/membership/root-key
 rotation, root-expiry recovery, and verified publication to a local HTTPS-served
 repository on Linux. Production initialization uses encrypted custody by default.
 No production authority is created by this implementation. Vercel publication and
-its hosted disposable rehearsal are complete; remote scheduling, the compiled
-trust bundle/release gate, and
-discovery consumers remain in the [public-network plan](public-network-plan.md).
+its hosted disposable rehearsal are complete, as is Linux node/CLI discovery
+integration. Intended authority activation and deployed network testing remain
+in the [public-network plan](public-network-plan.md).
 
 The launch profile uses one secured connected operator workstation and a tested
 backup. The operator may use `sudo`; the renewal service runs as a separate,
@@ -61,7 +61,8 @@ separate targets, snapshot, and timestamp keys. It signs and verifies a
 version-1 root with consistent snapshots and a 365-day expiration, then
 produces a public bootstrap bundle accepted by the durable trust client.
 The reported SHA-256 identifies the normalized signed initial root; it is
-**not** the legacy single-key fingerprint used by the current release gate.
+the value checked by `make check-public-release`, rather than a legacy
+single-key fingerprint.
 
 ### All-or-nothing commit and retry
 
@@ -833,9 +834,11 @@ The standalone `omega` binary is retired. The old DNS signer lives only in
 [test/burnin/legacy-omega](../test/burnin/legacy-omega/README.md), for existing
 burn-in consumers awaiting TUF migration. It must not create the public network.
 
-Ordinary builds still have no public trust anchor and reject public discovery.
-The existing `make check-public-release` gate compares `OMEGA_EXPECTED_SHA256`
-with the **legacy decoded 32-byte public key**, not this suite's initial signed
-TUF-root fingerprint. The compiled bundle and release gate must be migrated
-together before a public release; do not paste the new fingerprint into the old
-gate to bypass that work. Private-network development remains available.
+Ordinary builds still have an unconfigured public bundle and reject public
+discovery. `make check-public-release` now compares `OMEGA_EXPECTED_SHA256`
+with the embedded bundle's **initial signed TUF-root fingerprint**, the same
+fingerprint reported by this suite. The node and `soph` consume that bundle;
+copying it into the release source is a deliberate authority adoption, not an
+automatic download. See [bundle adoption](discovery.md#adopting-the-public-bundle).
+The intended authority, its independently checked bundle, and the actual
+three-root deployment remain bring-up work. Private connections still work.

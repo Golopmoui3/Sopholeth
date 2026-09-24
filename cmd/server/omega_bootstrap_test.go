@@ -7,11 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	"sopholeth/internal/discovery"
 	"sopholeth/internal/trust"
 )
 
 func TestResolveOmegaBootstrapRejectsUnconfiguredAnchor(t *testing.T) {
-	if trust.OmegaPubkey != "" {
+	if _, err := discovery.PublicBundle(); err == nil {
 		t.Skip("requires an unconfigured build")
 	}
 	dir := t.TempDir()
@@ -29,7 +30,7 @@ func TestResolveOmegaBootstrapRejectsUnconfiguredAnchor(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Never depend on external DNS, even if this regresses.
 	list, err := resolveOmegaBootstrap(ctx)
-	if list != nil || !errors.Is(err, trust.ErrUnconfiguredAnchor()) {
+	if list != nil || !errors.Is(err, discovery.ErrUnconfigured) {
 		t.Fatalf("want unconfigured authority, got %v, %v", list, err)
 	}
 	if !strings.Contains(err.Error(), "NODE_NETWORK=private") {

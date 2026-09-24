@@ -114,12 +114,17 @@ func TestRootRotationRevokesLeaseEvenWhenRefreshFails(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
 	c := r.client(dir)
 	r.accept(c)
+	invalidated := false
+	c.onInvalidate = func() { invalidated = true }
 	oldTimestamp := r.roleKeys[metadata.TIMESTAMP]
 	old, next := r.rotate()
 	r.put("/2.root.json", signed(t, r.root, append(old[:2:2], next...)...))
 	// New root retires every old role key; no successor timestamp is available.
 	if _, err := c.Refresh(context.Background()); err == nil {
 		t.Fatal("old timestamp unexpectedly verified against successor root")
+	}
+	if !invalidated {
+		t.Fatal("durable transition did not withdraw the application's runtime view")
 	}
 	c = r.client(dir)
 	if _, err := c.Current(context.Background()); !errors.Is(err, ErrNoManifest) {

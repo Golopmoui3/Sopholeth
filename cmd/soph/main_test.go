@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -18,7 +17,8 @@ import (
 	"time"
 
 	"sopholeth/internal/client/clienttest"
-	"sopholeth/internal/trust"
+	"sopholeth/internal/discovery"
+	"sopholeth/internal/trust/bootstrap"
 )
 
 // testApp wraps an app with captured streams and a temp config file.
@@ -43,8 +43,8 @@ func newTestApp(t *testing.T) *testApp {
 		stdout: ta.stdout,
 		stderr: ta.stderr,
 		getenv: func(k string) string { return ta.env[k] },
-		publicDiscovery: func(context.Context) (*trust.SignedList, error) {
-			return nil, errors.New("no discovery configured in test")
+		publicDiscovery: func(context.Context, bool) (discovery.Identity, bootstrap.View, error) {
+			return discovery.Identity{}, bootstrap.View{}, errors.New("no discovery configured in test")
 		},
 		newHTTPClient: func() *http.Client { return &http.Client{} },
 	}
@@ -609,112 +609,12 @@ func TestCancellationIsUnreachable(t *testing.T) {
 
 // ---------- public discovery ----------
 
-// mapResolver is an in-memory TXT resolver; missing names return a DNS
-// not-found error, which satisfies net.Error.
-type mapResolver map[string][]string
-
-func (m mapResolver) LookupTXT(_ context.Context, name string) ([]string, error) {
-	if recs, ok := m[name]; ok {
-		return recs, nil
-	}
-	return nil, &net.DNSError{Err: "no such host", Name: name, IsNotFound: true}
-}
-
-func signedListFor(t *testing.T, priv ed25519.PrivateKey, nodes []string, expires time.Time) string {
-	t.Helper()
-	list := &trust.SignedList{Version: trust.OmegaVersion, Expires: expires.Unix(), Nodes: nodes}
-	list.Sign(priv)
-	return list.Encode()
-}
-
-func TestPublicJoinWithTestAnchor(t *testing.T) {
-	node, addr := startFakeNode(t)
-	node.Network = "public"
-	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
-	dns := mapResolver{
-		"_bootstrap.test": {"omega=_omega.test"},
-		"_omega.test":     {signedListFor(t, priv, []string{"127.0.0.1:1", addr}, time.Now().Add(time.Hour))},
-	}
-	ta := newTestApp(t)
-	ta.app.publicDiscovery = newPublicDiscovery(pub, trust.DNSConfig{Resolver: dns, BootstrapName: "_bootstrap.test"})
-
-	out, errOut := ta.mustRun(t, "", "join")
-	if !strings.Contains(out, "public, signed-list") || !strings.Contains(out, "http://"+addr) {
-		t.Fatalf("public join out = %q", out)
-	}
-	if !strings.Contains(errOut, "root 127.0.0.1:1 failed health check") {
-		t.Fatalf("dead root should be reported: %q", errOut)
-	}
-	cfg, _ := loadConfig(ta.configPath)
-	saved := cfg.Networks["public"]
-	if cfg.Current != "public" || saved.Mode != modePublic || saved.Discovery != discoverySignedList || len(saved.Roots) != 2 {
-		t.Fatalf("saved = %+v", saved)
-	}
-	ta.mustRun(t, "v", "put", "k")
-	if v, _ := node.Value("k"); string(v) != "v" {
-		t.Fatal("put through public profile did not reach the root")
-	}
-
-	// Wrong trust anchor: verification fails, and that is not a
-	// reachability problem.
-	otherPub, _, _ := ed25519.GenerateKey(rand.Reader)
-	ta.app.publicDiscovery = newPublicDiscovery(otherPub, trust.DNSConfig{Resolver: dns, BootstrapName: "_bootstrap.test"})
-	code, _, errOut := ta.run("", "join", "--name", "bad")
-	if code != exitError || !strings.Contains(errOut, "public discovery unavailable") {
-		t.Fatalf("bad anchor: exit %d, %q", code, errOut)
-	}
-	if _, ok := loadOrEmpty(ta.configPath).Networks["bad"]; ok {
-		t.Fatal("failed public join must not save a profile")
-	}
-
-	// No records at all: DNS failure is a reachability problem.
-	ta.app.publicDiscovery = newPublicDiscovery(pub, trust.DNSConfig{Resolver: mapResolver{}, BootstrapName: "_bootstrap.test"})
-	code, _, errOut = ta.run("", "join")
-	if code != exitUnreachable || !strings.Contains(errOut, "public discovery unavailable") {
-		t.Fatalf("no dns: exit %d, %q", code, errOut)
-	}
-}
-
-func TestPublicJoinWithoutConfiguredAuthority(t *testing.T) {
-	if trust.OmegaPubkey != "" {
-		t.Skip("requires an unconfigured build")
-	}
-	ta := newTestApp(t)
-	ta.app.publicDiscovery = newPublicDiscovery(nil, trust.DNSConfig{Resolver: mapResolver{}})
-	code, _, errOut := ta.run("", "join")
-	if code != exitError || !strings.Contains(errOut, "omega trust anchor is not configured") ||
-		!strings.Contains(errOut, "soph join <node>") {
-		t.Fatalf("unconfigured public join: exit %d, %q", code, errOut)
-	}
-	if _, err := os.Stat(ta.configPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("failed public discovery must not create a profile: %v", err)
-	}
-}
-
 func loadOrEmpty(path string) *Config {
 	cfg, err := loadConfig(path)
 	if err != nil {
 		return newConfig()
 	}
 	return cfg
-}
-
-func TestPublicProfileExpiresWithSignedList(t *testing.T) {
-	_, addr := startFakeNode(t)
-	ta := newTestApp(t)
-	cfg := newConfig()
-	cfg.Current = "public"
-	cfg.Networks["public"] = Network{
-		Endpoint: "http://" + addr, Mode: modePublic, Discovery: discoverySignedList,
-		Roots: []string{addr}, RootsExpire: time.Now().Add(-time.Minute).Unix(),
-	}
-	if err := saveConfig(ta.configPath, cfg); err != nil {
-		t.Fatal(err)
-	}
-	code, _, errOut := ta.run("", "get", "k")
-	if code != exitUsage || !strings.Contains(errOut, "signed root list expired") {
-		t.Fatalf("exit %d, %q", code, errOut)
-	}
 }
 
 func TestPublicOperatorSuppliedEntryPoint(t *testing.T) {

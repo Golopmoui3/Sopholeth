@@ -201,11 +201,12 @@ func TestPreservesNodeInfoInSync(t *testing.T) {
 	msg := sampleMessage(func(m *gossip.Message) {
 		m.Type = gossip.MessageTypeSync
 		m.NodeInfo = &gossip.Node{
-			ID:       "node-a",
-			Address:  "192.168.1.1",
-			Port:     9090,
-			HTTPPort: 8080,
-			Enclave:  "acme-corp",
+			ID:         "node-a",
+			Address:    "192.168.1.1",
+			Port:       9090,
+			HTTPPort:   8080,
+			HTTPOrigin: "https://node.example",
+			Enclave:    "acme-corp",
 		}
 	})
 	if err := client.SendGossip(msg); err != nil {
@@ -220,6 +221,9 @@ func TestPreservesNodeInfoInSync(t *testing.T) {
 	}
 	if r.NodeInfo.Enclave != "acme-corp" {
 		t.Errorf("enclave: got %q", r.NodeInfo.Enclave)
+	}
+	if r.NodeInfo.HTTPOrigin != "https://node.example" {
+		t.Fatalf("lost HTTPS origin: %+v", r.NodeInfo)
 	}
 	if r.NodeInfo.HTTPPort != 8080 {
 		t.Errorf("http_port: got %d", r.NodeInfo.HTTPPort)

@@ -30,6 +30,8 @@ import (
 	"net"
 
 	"sopholeth/internal/cluster"
+	"sopholeth/internal/discovery"
+	"sopholeth/internal/endpoint"
 	"sopholeth/internal/gossip"
 	"sopholeth/internal/logging"
 	mcprpc "sopholeth/internal/mcp"
@@ -37,7 +39,6 @@ import (
 	"sopholeth/internal/storage"
 	"sopholeth/internal/transport/ws"
 	"sopholeth/internal/tree"
-	"sopholeth/internal/trust"
 )
 
 const (
@@ -147,102 +148,50 @@ func main() {
 		}
 	}
 
-	// Signed-root-list bootstrap for the public network. See
-	// docs/discovery.md. This replaces the pre-2.1
-	// unsigned DNS path; there is no fallback by design.
-	var rootList *trust.SignedList
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var publicDiscovery *discovery.Session
+	httpOrigin := os.Getenv("NODE_HTTP_ORIGIN")
+	if httpOrigin != "" {
+		var err error
+		httpOrigin, err = endpoint.Normalize(httpOrigin)
+		if err != nil {
+			log.Fatalf("NODE_HTTP_ORIGIN: %v", err)
+		}
+	}
 	if network == "public" && len(bootstrapNodes) == 0 {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		list, err := resolveOmegaBootstrap(ctx)
-		cancel()
+		var err error
+		publicDiscovery, err = resolveOmegaBootstrap(ctx)
 		if err != nil {
 			log.Fatalf("Omega bootstrap failed: %v", err)
 		}
-		rootList = list
-		bootstrapNodes = append(bootstrapNodes, list.Nodes...)
-	} else if network == "public" && len(bootstrapNodes) > 0 {
-		// NODE_PEERS short-circuits omega resolution, which in turn
-		// leaves IsRoot() false and causes /v1/bootstrap to 403. Fine
-		// for local testing; wrong for a real public-network root node.
-		// See docs/omega-operations.md for the guidance.
-		logging.Warn("NODE_NETWORK=public with NODE_PEERS set: skipping omega verification. This node will not be recognized as a bootstrap root and will return 403 for /v1/bootstrap requests.")
+		bootstrapNodes = publicDiscovery.Seeds()
+	} else if network == "public" {
+		logging.Warn("NODE_PEERS supplies unverified bootstrap seeds; this node cannot claim an official root role")
 	}
-
 	clusterNode := cluster.NewClusterNode(nodeID, address, gossipPort, httpPort, replicationFactor, int64(maxStorageMB)*1024*1024, time.Duration(writeTimeout)*time.Second, clusterSecret, enclave)
-
-	// Self-recognition: a node is a root iff its advertised address
-	// appears in the signed list. Roots answer /v1/bootstrap; non-roots
-	// return 403. Private-network deployments are never roots.
-	applyRootStatus := func(list *trust.SignedList) {
-		omegaLastRefreshGauge.SetToCurrentTime()
-		selfAdvertised := fmt.Sprintf("%s:%d", address, httpPort)
-		isRoot := false
-		for _, n := range list.Nodes {
-			if n == selfAdvertised {
-				isRoot = true
-				break
-			}
-		}
-		wasRoot := clusterNode.IsRoot()
-		clusterNode.SetRoot(isRoot)
-		if isRoot != wasRoot {
-			if isRoot {
-				logging.Info("Root status changed: this node is now a bootstrap root")
-			} else {
-				logging.Info("Root status changed: this node is no longer a bootstrap root")
-			}
-		}
+	clusterNode.SetHTTPOrigin(httpOrigin)
+	if enclave == "" {
+		enclave = "default"
 	}
-	if rootList != nil {
-		applyRootStatus(rootList)
-		selfAdvertised := fmt.Sprintf("%s:%d", address, httpPort)
-		if clusterNode.IsRoot() {
-			logging.Info("Initial root status: bootstrap root (advertised as %s)", selfAdvertised)
-		} else {
-			logging.Info("Initial root status: not a root (advertised as %s); /v1/bootstrap returns 403", selfAdvertised)
+	if publicDiscovery != nil {
+		if err := configurePublicDiscovery(clusterNode, publicDiscovery, nodeID, httpOrigin, enclave); err != nil {
+			log.Fatalf("Public root configuration: %v", err)
 		}
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	if err := clusterNode.Start(ctx, bootstrapNodes); err != nil {
-		log.Fatalf("Failed to start cluster node: %v", err)
-	}
-
-	// Start the omega refresh loop for public-network nodes. Keeps the
-	// cached signed list fresh and recomputes root status on each refresh.
-	if rootList != nil {
-		pubkey, err := trust.DecodedOmegaPubkey()
-		if err != nil {
-			log.Fatalf("decode omega pubkey: %v", err)
-		}
-		refresher := trust.NewRefresher(trust.RefresherConfig{
-			Pubkey:   pubkey,
-			CacheDir: trust.DefaultCacheDir(),
-			OnUpdate: applyRootStatus,
-			OnError: func(err error) {
+		logging.Info("Omega bootstrap: official root=%t, advertised origin=%s", clusterNode.IsRoot(), httpOrigin)
+		go publicDiscovery.Run(ctx, func(err error) {
+			if err != nil {
 				logging.Warn("Omega refresh: %v", err)
-			},
-		}, rootList)
-		go refresher.Run(ctx)
-
-		// Public network: re-bootstrap pulls from the refresher's current
-		// signed list, so a node that fully isolates picks up whatever
-		// roots are live now, not whatever it started with (#85, F5).
-		clusterNode.SetSeedProvider(func() []string {
-			list := refresher.Current()
-			if list == nil {
-				return nil
+			} else {
+				omegaLastRefreshGauge.SetToCurrentTime()
 			}
-			return list.Nodes
 		})
 	} else if len(bootstrapNodes) > 0 {
-		// Private / NODE_PEERS: re-bootstrap reuses the static seed list
-		// the operator provided. Capture by closure so the goroutine sees
-		// the same slice we started with (#85, F5).
 		seeds := append([]string(nil), bootstrapNodes...)
 		clusterNode.SetSeedProvider(func() []string { return seeds })
+	}
+	if err := clusterNode.Start(ctx, bootstrapNodes); err != nil {
+		log.Fatalf("Failed to start cluster node: %v", err)
 	}
 
 	// Tree manager owns substrate-transient attachment state. Substrate
@@ -257,7 +206,7 @@ func main() {
 	treeMgr := tree.NewManager(
 		&gossip.Node{
 			ID: gossip.NodeID(nodeID), Address: address,
-			Port: gossipPort, HTTPPort: httpPort, Enclave: enclave,
+			Port: gossipPort, HTTPPort: httpPort, HTTPOrigin: httpOrigin, Enclave: enclave,
 		},
 		clusterPeerer{cn: clusterNode},
 		tree.Options{
@@ -284,7 +233,7 @@ func main() {
 	// HTTP bootstrap is done. Failure falls back to HTTP-only operation
 	// (writes still propagate via HTTP gossip; reads of other agents'
 	// writes don't reach this node until reattach succeeds).
-	if inbound == tree.InboundFalse && len(bootstrapNodes) > 0 {
+	if network != "public" && inbound == tree.InboundFalse && len(bootstrapNodes) > 0 {
 		go func(seeds []string) {
 			// Give the gossip bootstrap a moment to settle so the peer
 			// list reflects the actual cluster before we pick an attach
@@ -323,7 +272,11 @@ func main() {
 		}(bootstrapNodes)
 	}
 	// Seed provider for tree-side reattach mirrors the cluster's recovery seeds.
-	treeMgr.SetSeedProvider(func() []string { return bootstrapNodes })
+	if network != "public" {
+		treeMgr.SetSeedProvider(func() []string { return bootstrapNodes })
+	}
+	// Public transient/WSS support is deferred. Never reinterpret an HTTPS
+	// discovery origin as a plaintext WebSocket address.
 
 	server := &HTTPServer{
 		clusterNode:    clusterNode,
@@ -478,48 +431,6 @@ func envInt(key string, defaultVal int) int {
 	return defaultVal
 }
 
-// resolveOmegaBootstrap fetches and verifies the signed root list from DNS,
-// falling back to a previously-cached verified list if DNS is unreachable.
-// Hard-fails only when neither source yields a currently-valid signed list —
-// a node without a verified trust anchor must not join the public network.
-func resolveOmegaBootstrap(ctx context.Context) (*trust.SignedList, error) {
-	pubkey, err := trust.DecodedOmegaPubkey()
-	if err != nil {
-		return nil, fmt.Errorf("public bootstrap unavailable (use NODE_NETWORK=private for local development): %w", err)
-	}
-
-	cacheDir, usedLastResort := trust.ResolveCacheDir()
-	if usedLastResort {
-		logging.Warn("Using %s as cache directory; this typically requires root write access. Set NODE_CACHE_DIR for a writable location if refresh writes start failing.", cacheDir)
-	}
-	now := time.Now()
-
-	list, fetchErr := trust.FetchSigned(ctx, trust.DNSConfig{}, pubkey, now)
-	if fetchErr == nil {
-		if err := trust.SaveCache(cacheDir, list); err != nil {
-			logging.Warn("Failed to update omega cache at %s: %v (continuing)", cacheDir, err)
-		}
-		logging.Info("Omega bootstrap: verified signed root list (%d nodes, expires %s)",
-			len(list.Nodes), time.Unix(list.Expires, 0).UTC().Format(time.RFC3339))
-		return list, nil
-	}
-
-	logging.Warn("Omega DNS fetch failed: %v — trying cached list at %s", fetchErr, cacheDir)
-	cached, cacheErr := trust.LoadCache(cacheDir)
-	if cacheErr != nil {
-		return nil, fmt.Errorf("dns: %v; cache: %w", fetchErr, cacheErr)
-	}
-	if cached == nil {
-		return nil, fmt.Errorf("no DNS record and no cache available: %w", fetchErr)
-	}
-	if err := cached.Verify(pubkey, now); err != nil {
-		return nil, fmt.Errorf("cached omega list invalid: %w (dns: %v)", err, fetchErr)
-	}
-	logging.Info("Omega bootstrap: using cached signed root list (%d nodes, expires %s)",
-		len(cached.Nodes), time.Unix(cached.Expires, 0).UTC().Format(time.RFC3339))
-	return cached, nil
-}
-
 // CORS middleware
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -659,19 +570,21 @@ func (s *HTTPServer) topologyHandler(w http.ResponseWriter, r *http.Request) {
 	peers := s.clusterNode.Topology()
 
 	type peerInfo struct {
-		ID       string `json:"id"`
-		Address  string `json:"address"`
-		HTTPPort int    `json:"http_port"`
-		Enclave  string `json:"enclave"`
+		ID         string `json:"id"`
+		Address    string `json:"address"`
+		HTTPPort   int    `json:"http_port"`
+		HTTPOrigin string `json:"http_origin,omitempty"`
+		Enclave    string `json:"enclave"`
 	}
 
 	peerList := make([]peerInfo, 0, len(peers))
 	for _, p := range peers {
 		peerList = append(peerList, peerInfo{
-			ID:       string(p.ID),
-			Address:  p.Address,
-			HTTPPort: p.HTTPPort,
-			Enclave:  p.Enclave,
+			ID:         string(p.ID),
+			Address:    p.Address,
+			HTTPPort:   p.HTTPPort,
+			HTTPOrigin: p.HTTPOrigin,
+			Enclave:    p.Enclave,
 		})
 	}
 
@@ -886,11 +799,12 @@ func (s *HTTPServer) gossipHandler(w http.ResponseWriter, r *http.Request) {
 			enclave = "default"
 		}
 		gossipMsg.NodeInfo = &gossip.Node{
-			ID:       gossip.NodeID(simpleMsg.NodeInfo.ID),
-			Address:  simpleMsg.NodeInfo.Address,
-			Port:     simpleMsg.NodeInfo.Port,
-			HTTPPort: simpleMsg.NodeInfo.HTTPPort,
-			Enclave:  enclave,
+			ID:         gossip.NodeID(simpleMsg.NodeInfo.ID),
+			Address:    simpleMsg.NodeInfo.Address,
+			Port:       simpleMsg.NodeInfo.Port,
+			HTTPPort:   simpleMsg.NodeInfo.HTTPPort,
+			HTTPOrigin: simpleMsg.NodeInfo.HTTPOrigin,
+			Enclave:    enclave,
 		}
 	}
 

@@ -11,6 +11,17 @@
 
 ### Public discovery
 
+- Connect nodes and `soph join` to omega HTTPS/TUF discovery, durable rollback
+  state, and an embedded public bundle checked by the release fingerprint gate.
+  Preserve HTTPS origins through bootstrap/gossip and refuse redirects. Expire
+  official root roles and recovery seeds independently of refresh failures.
+- Refresh saved public CLI profiles without manual rejoining, bind them to
+  their original authority, and select a healthy current root before sending
+  data commands. Never implicitly retry PUT. `soph serve` follows the same
+  profile and renews its viewing connection with fresh snapshots.
+  Builds remain unconfigured until the intended public bundle is adopted;
+  real-network validation and native Windows discovery remain ahead.
+
 - Give newly created public repositories the operational account's ownership,
   so privileged publication can hand off to an unprivileged renewal service.
   Reject existing repository ownership mismatches with an actionable path.

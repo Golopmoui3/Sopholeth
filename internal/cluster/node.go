@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,15 +25,15 @@ type ClusterNode struct {
 	replicationFactor int
 	writeTimeout      time.Duration
 	clusterSecret     string
+	httpClient        *http.Client
 
 	pendingWrites map[string]*WriteOperation
 	writesMutex   sync.RWMutex
 
-	// isRoot tracks whether this node appears in the currently-trusted
-	// signed root list. Updated on each successful omega refresh
-	// (see cmd/server/main.go and future phase 4 refresh loop). When
-	// false, the HTTP server refuses bootstrap requests with 403.
-	isRoot atomic.Bool
+	// isRoot supports explicit test/private setup. Public nodes install a
+	// rootProvider that checks the current verified discovery deadline.
+	isRoot       atomic.Bool
+	rootProvider func() bool // Configured before Start; checks runtime validity on use.
 
 	// seedProvider returns the current bootstrap seed list. Used by the
 	// isolation-recovery loop to re-bootstrap when peer count drops to 0
@@ -129,6 +130,9 @@ func NewClusterNode(nodeID string, address string, gossipPort int, httpPort int,
 
 func (cn *ClusterNode) Start(ctx context.Context, bootstrapAddresses []string) error {
 	transport := gossip.NewHTTPTransport(cn.localNode, cn.clusterSecret)
+	if cn.httpClient != nil {
+		transport.SetHTTPClient(cn.httpClient)
+	}
 	cn.protocol.SetTransport(transport)
 	cn.protocol.SetMessageHandler(cn.handleGossipMessage)
 	cn.protocol.EnableMetrics()
@@ -237,7 +241,25 @@ func (cn *ClusterNode) Stop() error {
 // bootstrap responses — non-roots return 403 rather than handing out peer
 // topology to arbitrary callers.
 func (cn *ClusterNode) IsRoot() bool {
+	if cn.rootProvider != nil {
+		return cn.rootProvider()
+	}
 	return cn.isRoot.Load()
+}
+
+// SetRootProvider installs the expiring discovery role, independent of peer
+// membership. Configure it before Start, alongside the recovery seed provider.
+func (cn *ClusterNode) SetRootProvider(provider func() bool) { cn.rootProvider = provider }
+
+// SetHTTPOrigin sets the externally reachable API/gossip origin before Start.
+// Listener ports may differ when a TLS proxy fronts the node.
+func (cn *ClusterNode) SetHTTPOrigin(origin string) { cn.localNode.HTTPOrigin = origin }
+
+// ConfigureBootstrap must be called before Start. nil uses the system CA store
+// and the ordinary private/explicit bootstrap behavior.
+func (cn *ClusterNode) ConfigureBootstrap(client *http.Client, check func(string, []*gossip.Node) error) {
+	cn.httpClient = client
+	cn.protocol.ConfigureBootstrap(client, check)
 }
 
 // SetRoot updates the root flag. Call after each verified refresh of the
