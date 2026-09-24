@@ -7,7 +7,8 @@ This records the first-network profile for
 [public-network plan](public-network-plan.md#what-is-already-ready).
 See [omega operations](omega-operations.md) for commands and recovery steps.
 Production creation now selects encrypted schema 2 by default; no live authority
-has been created. Hosted publication and discovery consumer integration remain.
+has been created. Hosted publication and Linux node/CLI discovery are implemented. Intended
+authority activation and real-network testing remain.
 
 ## Launch criteria and accepted limits
 

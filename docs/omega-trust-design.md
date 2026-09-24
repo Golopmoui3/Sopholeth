@@ -101,8 +101,9 @@ The encrypted backend now supports the full operator lifecycle and production
 initialization with schema 2. Ordinary `status` needs no password;
 `status --check-keys` verifies active restored generations. Schema 1 stays
 disposable-only. See [custody and restoration](omega-operations.md#encrypted-custody-and-backup-restoration).
-Hosted metadata, compiled bundle/release checks, and consumer integration remain
-separate launch work.
+Hosted metadata, the compiled bundle/release check, and Linux node/CLI
+integration are implemented. Adopting the intended authority and operating
+three public roots remain bring-up work.
 
 Compromise confined to the renewal service account must not permit new membership
 approval or replacement of the root authority. Keep operator keys and passwords
@@ -345,10 +346,11 @@ journaled local-directory `publish`, restricted online custody provisioning,
 unattended renewal, online/membership/root-key rotation, and local/HTTPS-verified
 `status`, root-expiry recovery, and replacement with one rotated root signer
 unavailable. Encrypted custody, Vercel hosting, the hosted rehearsal, and
-standalone-tool retirement are also implemented. The compiled public bundle
-and release-gate migration, node/CLI/dashboard adoption, runtime callbacks,
-and transport checks remain
-pending. The [client reference](../internal/trust/bootstrap/README.md)
+standalone-tool retirement are also implemented. Node/CLI adoption, embedded
+public-bundle release checks, runtime invalidation, HTTPS bootstrap/gossip, and
+saved-profile/viewer refresh are implemented and exercised locally. The actual
+public bundle remains unconfigured. Dashboard adoption and native Windows
+storage are deferred; deployed network behavior still needs bring-up testing. The [client reference](../internal/trust/bootstrap/README.md)
 records its supported storage platforms and exact validation boundaries.
 
 The first TUF consumer integration and three-root test deployment target Linux.

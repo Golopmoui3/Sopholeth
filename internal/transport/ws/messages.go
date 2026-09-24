@@ -55,6 +55,7 @@ type HelloPayload struct {
 	Enclave      string       `json:"enclave"`
 	Address      string       `json:"address"`
 	HTTPPort     int          `json:"http_port"`
+	HTTPOrigin   string       `json:"http_origin,omitempty"`
 	Capabilities Capabilities `json:"capabilities"`
 }
 
@@ -75,10 +76,11 @@ type WelcomePayload struct {
 // AlternativeParent is a fallback substrate the transient can attach to
 // when its current parent goes away.
 type AlternativeParent struct {
-	ID       string `json:"id"`
-	Address  string `json:"address"`
-	HTTPPort int    `json:"http_port"`
-	Enclave  string `json:"enclave,omitempty"`
+	ID         string `json:"id"`
+	Address    string `json:"address"`
+	HTTPPort   int    `json:"http_port"`
+	HTTPOrigin string `json:"http_origin,omitempty"`
+	Enclave    string `json:"enclave,omitempty"`
 }
 
 // GoodbyePayload is sent by a substrate before shutting down to keep
@@ -135,11 +137,12 @@ func messageToWire(msg *gossip.Message) *gossip.SimpleMessage {
 	}
 	if msg.NodeInfo != nil {
 		wire.NodeInfo = &gossip.SimpleNodeInfo{
-			ID:       string(msg.NodeInfo.ID),
-			Address:  msg.NodeInfo.Address,
-			Port:     msg.NodeInfo.Port,
-			HTTPPort: msg.NodeInfo.HTTPPort,
-			Enclave:  msg.NodeInfo.Enclave,
+			ID:         string(msg.NodeInfo.ID),
+			Address:    msg.NodeInfo.Address,
+			Port:       msg.NodeInfo.Port,
+			HTTPPort:   msg.NodeInfo.HTTPPort,
+			HTTPOrigin: msg.NodeInfo.HTTPOrigin,
+			Enclave:    msg.NodeInfo.Enclave,
 		}
 	}
 	return wire
@@ -163,11 +166,12 @@ func wireToMessage(wire *gossip.SimpleMessage) *gossip.Message {
 			enclave = "default"
 		}
 		msg.NodeInfo = &gossip.Node{
-			ID:       gossip.NodeID(wire.NodeInfo.ID),
-			Address:  wire.NodeInfo.Address,
-			Port:     wire.NodeInfo.Port,
-			HTTPPort: wire.NodeInfo.HTTPPort,
-			Enclave:  enclave,
+			ID:         gossip.NodeID(wire.NodeInfo.ID),
+			Address:    wire.NodeInfo.Address,
+			Port:       wire.NodeInfo.Port,
+			HTTPPort:   wire.NodeInfo.HTTPPort,
+			HTTPOrigin: wire.NodeInfo.HTTPOrigin,
+			Enclave:    enclave,
 		}
 	}
 	return msg

@@ -8,10 +8,11 @@ ordinary Go suite:
 go test -race ./internal/trust/bootstrap
 ```
 
-The node, CLI, and dashboard still use the interim discovery path. Connecting
-this package to those consumers and replacing the legacy public-release anchor
-are subsequent changes. The `soph omega` operator lifecycle is implemented. Public
-discovery remains disabled in ordinary builds; this package creates no production authority.
+The node and CLI use this package through `internal/discovery`. The public
+release gate checks the embedded initial TUF-root fingerprint. The standalone
+dashboard remains on the disabled legacy DNS path and is deferred. The
+`soph omega` operator lifecycle is implemented. Ordinary builds still have an
+unconfigured bundle; this package creates no production authority.
 
 ## API and formats
 
@@ -83,9 +84,10 @@ without userinfo, queries, fragments, or application paths. Equivalent host
 case, default ports, and trailing slashes normalize for duplicate detection.
 Explicit private/loopback origins are permitted for rehearsal. Unknown and
 duplicate JSON fields, unsupported schemas/enclaves, and oversized manifests
-are rejected. Node identity and advertised gossip/WebSocket endpoint checks
-belong to the upcoming transport integration; a manifest alone does not
-authenticate those connections.
+are rejected. The node/CLI consumers check advertised root IDs and preserve
+signed HTTPS origins through bootstrap and HTTP gossip. Public WebSocket
+attachment and dashboard adoption remain separate work; a manifest alone does
+not authenticate arbitrary peer referrals.
 
 ## Refresh, durable progress, and leases
 
@@ -123,6 +125,10 @@ coexist with a previous still-valid manifest. Any verified change to root or
 targets metadata conservatively revokes that manifest until full acceptance,
 even if later downloads fail. Consumers retaining a root-status flag must
 schedule its revocation at this deadline independently of refresh success.
+`Config.OnInvalidate` notifies an in-process consumer immediately after a durable
+root/targets transition withdraws an accepted view, before the next download.
+It must not block or call back into the client. `internal/discovery` uses this
+to revoke its in-memory role/seeds during a stalled refresh.
 
 ## Storage and validation limits
 
@@ -151,8 +157,9 @@ killing another process. Write failures are injected around write/sync/rename
 boundaries. These tests verify the protocol and write ordering, not physical
 power-loss behavior of a particular storage device or network filesystem.
 
-Operator recovery/reset, encrypted key custody, publication, scheduled renewal,
-runtime callbacks, and final node/CLI integration are not implemented here.
+Operator custody/publication/renewal live in `internal/omega`; application
+refresh/expiry live in `internal/discovery` and the node/CLI consumers. Explicit
+reset migration and native Windows state storage remain follow-ups.
 
 The accepted `View.MetadataSHA256` map identifies the exact authenticated bytes
 for root, targets, snapshot, and timestamp. The operator publisher compares

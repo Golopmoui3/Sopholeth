@@ -10,15 +10,16 @@ The dashboard uses `DASHBOARD_STATE_DIR` for its own state. The
 | --- | --- | --- |
 | `NODE_HTTP_PORT` | `8080` | HTTP API, gossip, and WebSocket port. |
 | `NODE_ID` | Generated | Node identifier. Use distinct IDs within a deployment. |
+| `NODE_HTTP_ORIGIN` | Empty | External HTTP(S) origin for API/gossip behind a proxy; public roots must match their signed HTTPS origin. |
 | `NODE_ADDRESS` | `localhost` | Advertised hostname or address; does not control listener binding. |
 | `NODE_NETWORK` | `public` | Signed public discovery or `private` manual discovery. |
-| `NODE_PEERS` | Empty | Comma-separated bootstrap seeds, as `host:httpPort`. |
+| `NODE_PEERS` | Empty | Comma-separated bootstrap seeds, as bare `host:httpPort` or explicit HTTP(S) origins. |
 | `NODE_ENCLAVE` | `default` | Data replication boundary. |
-| `NODE_INBOUND` | `false` | Accept WebSocket children when `true`; otherwise attach outbound when seeds are available. |
+| `NODE_INBOUND` | `false` | Accept WebSocket children when `true`; otherwise attach outbound on private networks when seeds are available. Public outbound attachment is deferred. |
 | `NODE_MAX_CHILDREN` | `100` | Substrate attachment limit; `0` disables attachments. |
 | `NODE_GOSSIP_PORT` | `9090` | Legacy advertised metadata; no listener binds this port. |
 
-The HTTP listener binds all interfaces. Private mode disables public DNS
+The HTTP listener binds all interfaces. Private mode disables public HTTPS
 discovery; it does not add authentication or bind to loopback. An enclave is
 a replication boundary, not an access-control boundary.
 
@@ -55,7 +56,7 @@ before public launch; client-side clamping is not a complete wire policy.
 | `NODE_TRUST_PROXY` | `false` | Trust forwarded client-IP headers when `true`. |
 | `NODE_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error`. |
 | `NODE_STREAM` | Enabled | Set to `off` to disable `/v1/stream`. See [stream limits](api.md#live-stream). |
-| `NODE_CACHE_DIR` | See below | Verified public root-list cache directory. |
+| `NODE_STATE_DIR` | `$HOME/.sopholeth/state` | Persistent service-owned state; HTTPS trust lives in its `discovery/` subdirectory. |
 | `NODE_PPROF_ENABLED` | `false` | Enable a separate profiling listener. |
 | `NODE_PPROF_ADDR` | `127.0.0.1:6060` | Profiling listener address. |
 
@@ -63,10 +64,11 @@ Trust proxy headers only when requests arrive through a trusted proxy that
 controls those headers. Keep profiling reachable only through an operator
 access path.
 
-The root-list cache defaults to `$HOME/.sopholeth/cache`, falling back to
-`/var/cache/sopholeth` when no home directory is available. Set a writable
-`NODE_CACHE_DIR` in containers. It stores signed discovery metadata, not
-application payloads.
+Keep `NODE_STATE_DIR` persistent and owned by the service account. It stores
+public metadata and rollback history, never signing keys or application
+payloads. The trust directory is private; missing/corrupt existing state is not
+silently reset. Set the variable explicitly for service accounts without a
+home. The node no longer reads the legacy `NODE_CACHE_DIR` DNS cache.
 
 ## MCP defaults
 

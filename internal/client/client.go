@@ -14,9 +14,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
+
+	"sopholeth/internal/endpoint"
 	"strconv"
 	"strings"
 	"time"
@@ -140,49 +141,17 @@ func New(endpoint string, httpClient *http.Client) *Client {
 	if httpClient == nil {
 		httpClient = &http.Client{}
 	}
-	return &Client{endpoint: strings.TrimRight(endpoint, "/"), http: httpClient}
+	copy := *httpClient
+	copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &Client{endpoint: strings.TrimRight(endpoint, "/"), http: &copy}
 }
 
 // Endpoint returns the base URL this client targets.
 func (c *Client) Endpoint() string { return c.endpoint }
 
-// NormalizeEndpoint turns what a person types into a base URL. Accepted
-// forms: a bare host or IP, host:port, or a full http(s) URL. A missing
-// scheme becomes http and a missing port becomes DefaultHTTPPort. Any path
-// component is rejected because the client appends /v1/... itself.
-func NormalizeEndpoint(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", errors.New("endpoint must not be empty")
-	}
-	if !strings.Contains(raw, "://") {
-		raw = "http://" + raw
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "", fmt.Errorf("invalid endpoint: %w", err)
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", fmt.Errorf("invalid endpoint: scheme must be http or https, got %q", u.Scheme)
-	}
-	if u.Hostname() == "" {
-		return "", errors.New("invalid endpoint: missing host")
-	}
-	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return "", errors.New("invalid endpoint: credentials, query, and fragment are not allowed")
-	}
-	if p := strings.TrimRight(u.Path, "/"); p != "" {
-		return "", fmt.Errorf("invalid endpoint: path %q is not allowed", u.Path)
-	}
-	if u.Port() == "" {
-		u.Host = net.JoinHostPort(u.Hostname(), strconv.Itoa(DefaultHTTPPort))
-	} else if _, err := strconv.Atoi(u.Port()); err != nil {
-		return "", fmt.Errorf("invalid endpoint: bad port %q", u.Port())
-	}
-	u.Path = ""
-	u.RawPath = ""
-	return u.String(), nil
-}
+// NormalizeEndpoint preserves explicit HTTP(S) origins. Bare addresses use
+// HTTP and the node's default port, 8080.
+func NormalizeEndpoint(raw string) (string, error) { return endpoint.Normalize(raw) }
 
 func (c *Client) dataURL(key string) string {
 	return c.endpoint + "/v1/data/" + url.PathEscape(key)

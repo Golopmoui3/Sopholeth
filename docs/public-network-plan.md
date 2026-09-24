@@ -60,10 +60,11 @@ succeeded after the public-directory ownership repair, now fixed in #240.
 The operator disabled and removed the disposable timer. A complete daily remote
 renewal cycle has not yet been observed; observe it on the running test network.
 
-Nodes and `soph join` still use the old DNS discovery path. The new HTTPS trust
-client exists, but consumer integration and the compiled bundle/fingerprint
-check are unfinished. No authority for the intended public test network has
-been created, and the three roots are not deployed.
+Nodes and `soph join` now use the HTTPS trust client, embedded public bundle,
+and initial TUF-root fingerprint gate. Local fixtures exercise saved-profile
+renewal, HTTPS bootstrap/gossip, and runtime expiry. The embedded bundle remains
+unconfigured: no intended test-network authority has been created and the three
+roots are not deployed. Real-network validation belongs to bring-up.
 
 ## Delivery order
 
@@ -73,8 +74,8 @@ The [#150](https://github.com/TickTockBent/Sopholeth/issues/150) fix separates
 explicit `SYNC_REQUEST` messages from one-way `SYNC` announcements. Two
 under-peered nodes now finish their exchange, and later requests still discover
 new peers. The regression exercises repeated recovery ticks and HTTP discovery.
-This prerequisite is implemented; the next code slice is discovery integration
-in step 2. Deploy matching builds because older nodes lack the request type.
+This prerequisite is implemented. The discovery integration in step 2 is also
+implemented; host configuration and bring-up are next. Deploy matching builds because older nodes lack the request type.
 
 Do not make the entire replication/peer audit a dependency of first deployment.
 Existing replication is sufficient to start with a small healthy-network test;
@@ -83,8 +84,11 @@ prerequisite needs a concrete explanation of what prevents bring-up.
 
 ### 2. Connect real discovery to nodes and the CLI
 
-Use the existing [HTTPS trust client](../internal/trust/bootstrap/README.md)
-and omega output. Do not create another signing format or admission protocol.
+Implemented for Linux using the existing
+[HTTPS trust client](../internal/trust/bootstrap/README.md) and omega output.
+The [discovery contract](discovery.md) records the behavior below. Bundle
+adoption is part of actual network setup; these are local integration results,
+not a claim that public joining has been tested on deployed hosts.
 
 - Load the public TUF bundle in the node and `soph`, and compare its fingerprint
   with the expected authority when building the test-network binaries. Keep
@@ -93,6 +97,12 @@ and omega output. Do not create another signing format or admission protocol.
 - Use signed HTTPS root origins without dropping their schemes, disabling
   certificate checks, or following redirects to an unapproved origin (#194).
   Checking an official bootstrap endpoint does not certify its peer referrals.
+- Pin listed root IDs to their verified origin/enclave throughout peer-table
+  updates. Only a later verified manifest can move those routes. Unsigned
+  bootstrap/SYNC cannot move an established ordinary peer either, and PONG
+  cannot change its enclave. This addresses the route-replacement part of
+  #211; peer admission stays open and the broader liveness/resource cases
+  remain follow-up work.
 - Preserve rollback protection, cached discovery within its validity, runtime
   expiry, and retry backoff (#160, #193, #172). Expired metadata must not keep
   authorizing an official root role or bootstrap seed. Ordinary peer membership
@@ -102,9 +112,12 @@ and omega output. Do not create another signing format or admission protocol.
   whose local acceptance may already be known. Exercise the same profile path
   from `soph serve` when using the viewer.
 
-Prove the changed discovery path with a disposable authority, a fresh client,
-and a joining node. Reuse existing replication and trust/rotation coverage;
-do not repeat the entire omega interruption suite for each consumer.
+Local tests exercise a disposable authority, a fresh client, a saved profile
+following updated roots, an ordinary unlisted node joining and replicating over
+HTTPS, and expiry during blocked refresh. The viewer's stream selection is
+withdrawn and rebuilt on refresh. Existing trust/rotation coverage is reused;
+real `soph join`, external transport, and three-root operation still need the
+running network in steps 3–4.
 
 An explicit bundle override for deliberate resets (#231) is useful follow-up.
 Initially, distributing a new binary with a deliberately adopted new bundle is

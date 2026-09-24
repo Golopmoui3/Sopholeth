@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sopholeth/internal/discovery"
 	"sort"
 	"strings"
 	"time"
@@ -23,7 +24,8 @@ const (
 
 // How a public network's endpoint was chosen.
 const (
-	discoverySignedList       = "signed-list"
+	discoverySignedList       = "signed-list" // Legacy profiles require an explicit re-join.
+	discoveryHTTPS            = "https"
 	discoveryOperatorSupplied = "operator-supplied"
 )
 
@@ -37,17 +39,19 @@ type Network struct {
 	// the signed-discovery network; see Discovery for how the endpoint
 	// was chosen.
 	Mode string `json:"mode"`
-	// Discovery is set for public networks: signed-list when the endpoint
-	// came from a verified root list, operator-supplied when the user
+	// Discovery is set for public networks: https when the endpoint
+	// came from a verified TUF manifest, operator-supplied when the user
 	// named it. An operator-supplied endpoint is never treated as a trust
 	// anchor and is not verified against the signed list.
 	Discovery string `json:"discovery,omitempty"`
-	// Roots holds the verified root addresses (host:port) from the signed
-	// list at join time, for signed-list public networks.
+	// Roots holds the last verified HTTPS root origins, for display.
+	// Durable trust state, never this list, authorizes public connections.
 	Roots []string `json:"roots,omitempty"`
-	// RootsExpire is the signed list's Unix expiration, for signed-list
-	// public networks. After it passes the profile must be re-joined.
-	RootsExpire int64 `json:"roots_expire,omitempty"`
+	// RootsExpire is the last verified metadata deadline (Unix seconds).
+	RootsExpire int64              `json:"roots_expire,omitempty"`
+	Authority   discovery.Identity `json:"authority,omitzero"`
+	// A scheduling hint only; every invocation revalidates durable trust.
+	DiscoveryChecked time.Time `json:"discovery_checked,omitzero"`
 	// What /v1/health reported at join time.
 	NodeID      string    `json:"node_id,omitempty"`
 	NodeNetwork string    `json:"node_network,omitempty"`

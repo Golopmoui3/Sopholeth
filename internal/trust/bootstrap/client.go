@@ -25,14 +25,19 @@ type Config struct {
 	Bundle     Bundle
 	StateDir   string
 	HTTPClient *http.Client // Optional TLS/transport configuration, never a trust bypass.
+	// OnInvalidate withdraws an application's retained view after a durable
+	// root/targets transition, before the next potentially stalled download.
+	// It must not call back into Client or block on I/O.
+	OnInvalidate func()
 }
 
 type Client struct {
-	bundle Bundle
-	dir    string
-	http   *http.Client
-	now    func() time.Time
-	hook   func(string) error // Tests only: inject interrupted durable writes.
+	bundle       Bundle
+	dir          string
+	http         *http.Client
+	now          func() time.Time
+	hook         func(string) error // Tests only: inject interrupted durable writes.
+	onInvalidate func()
 }
 
 type Versions struct {
@@ -99,7 +104,7 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 	}
 	hc.Jar = nil
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	c := &Client{bundle: bundle, dir: dir, http: hc, now: time.Now}
+	c := &Client{bundle: bundle, dir: dir, http: hc, now: time.Now, onInvalidate: cfg.OnInvalidate}
 	s, created, err := openStore(ctx, dir, true)
 	if err != nil {
 		return nil, err
@@ -185,7 +190,11 @@ func (c *Client) Refresh(ctx context.Context) (view View, resultErr error) {
 		if checkpointFailed {
 			return errors.New("bootstrap: prior state checkpoint failed")
 		}
+		hadManifest := st.Accepted != nil
 		err := checkpointMetadata(s, st, metaDir)
+		if err == nil && hadManifest && st.Accepted == nil && c.onInvalidate != nil {
+			c.onInvalidate()
+		}
 		checkpointFailed = err != nil
 		return err
 	}

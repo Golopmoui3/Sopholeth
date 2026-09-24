@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"sopholeth/internal/endpoint"
 	"sopholeth/internal/logging"
 )
 
@@ -27,11 +28,12 @@ type SimpleMessage struct {
 
 // SimpleNodeInfo is the wire format for node information in gossip messages.
 type SimpleNodeInfo struct {
-	ID       string `json:"id"`
-	Address  string `json:"address"`
-	Port     int    `json:"port"`
-	HTTPPort int    `json:"http_port"`
-	Enclave  string `json:"enclave,omitempty"` // Empty treated as "default" for backwards compat
+	ID         string `json:"id"`
+	Address    string `json:"address"`
+	Port       int    `json:"port"`
+	HTTPPort   int    `json:"http_port"`
+	HTTPOrigin string `json:"http_origin,omitempty"`
+	Enclave    string `json:"enclave,omitempty"` // Empty treated as "default" for backwards compat
 }
 
 // HTTPTransport implements gossip communication over HTTP
@@ -53,6 +55,19 @@ func NewHTTPTransport(localNode *Node, clusterSecret string) *HTTPTransport {
 			Timeout: 5 * time.Second,
 		},
 	}
+}
+
+// SetHTTPClient configures CA roots for an HTTPS deployment before use.
+// Send still enforces certificate/hostname validation and refuses redirects.
+func (t *HTTPTransport) SetHTTPClient(client *http.Client) {
+	if client == nil {
+		return
+	}
+	copy := *client
+	if copy.Timeout <= 0 {
+		copy.Timeout = 5 * time.Second
+	}
+	t.client = &copy
 }
 
 // Start initializes the transport (no-op for HTTP as we use the main HTTP server)
@@ -83,16 +98,21 @@ func (t *HTTPTransport) Send(ctx context.Context, node *Node, msg *Message) erro
 	// Include NodeInfo if present
 	if msg.NodeInfo != nil {
 		simpleMsg.NodeInfo = &SimpleNodeInfo{
-			ID:       string(msg.NodeInfo.ID),
-			Address:  msg.NodeInfo.Address,
-			Port:     msg.NodeInfo.Port,
-			HTTPPort: msg.NodeInfo.HTTPPort,
-			Enclave:  msg.NodeInfo.Enclave,
+			ID:         string(msg.NodeInfo.ID),
+			Address:    msg.NodeInfo.Address,
+			Port:       msg.NodeInfo.Port,
+			HTTPPort:   msg.NodeInfo.HTTPPort,
+			HTTPOrigin: msg.NodeInfo.HTTPOrigin,
+			Enclave:    msg.NodeInfo.Enclave,
 		}
 	}
 
 	// Send to the HTTP gossip endpoint
-	url := fmt.Sprintf("http://%s:%d/v1/gossip/message", node.Address, node.HTTPPort)
+	origin, err := node.Origin()
+	if err != nil {
+		return err
+	}
+	url := origin + "/v1/gossip/message"
 
 	jsonData, err := json.Marshal(simpleMsg)
 	if err != nil {
@@ -108,7 +128,11 @@ func (t *HTTPTransport) Send(ctx context.Context, node *Node, msg *Message) erro
 		req.Header.Set(SignatureHeader, SignBody(t.clusterSecret, jsonData))
 	}
 
-	resp, err := t.client.Do(req)
+	client, err := endpoint.Client(t.client)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send message to %s: %w", url, err)
 	}

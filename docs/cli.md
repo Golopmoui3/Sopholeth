@@ -51,8 +51,7 @@ See [omega operations](omega-operations.md) for the commands, all-or-nothing
 commit/retry contract, publication journal, custody limits, and JSON status.
 `status --check-keys` unlocks all active keys to verify a restored backup.
 Ordinary status, completed retries, and renewal need no passphrase. The
-standalone `omega` operator binary is retired. Hosted metadata, the compiled
-trust bundle/release gate, and discovery consumers still precede public launch.
+standalone `omega` operator binary is retired. The intended public bundle and real network deployment still precede public launch.
 
 ## Join a network
 
@@ -62,7 +61,8 @@ soph join node.example:9000 --name lab
 soph join https://node.example        # TLS if a proxy terminates it
 ```
 
-Join normalizes what you typed to a base URL, calls `/v1/health`, and on
+Explicit URLs retain HTTP/HTTPS default ports; bare addresses default to HTTP
+port 8080. Join normalizes what you typed to a base URL, calls `/v1/health`, and on
 success saves the connection and makes it current. The response must report
 `healthy`, a non-empty node ID and enclave, and a `private` or `public` network.
 A failed or invalid health check leaves saved profiles and the current
@@ -79,15 +79,25 @@ soph join                             # verified signed discovery
 soph join host:port --public          # public network through a node you name
 ```
 
-With no endpoint, `soph join` resolves the signed root list over DNS, verifies
-it against the compiled omega key, and saves the first root that answers a
-health check under the name `public`. The verified roots and the list's
-expiration are recorded with the profile; once the list expires, commands
-refuse the profile until you run `soph join` again.
+With no endpoint, `soph join` verifies the HTTPS/TUF bootstrap manifest using
+the public bundle embedded in the build. It checks root health against the
+signed node ID and enclave, then saves a client connection named `public`.
+It does not start a node or join gossip.
 
-The public network is not live. Until the [trust anchor and DNS records
-exist](discovery.md), `soph join` reports that public discovery is
-unavailable. Tests exercise this path with an injected test anchor.
+The profile records the authority fingerprint, network, and repository. Each
+command revalidates durable discovery state beside the config file; hourly
+checks or invalid cached metadata trigger bounded refresh. A valid durable view
+can cover a metadata outage until its deadline. The client keeps its selected
+root while listed and healthy, otherwise probes other current roots before
+sending the command. It never retries a PUT as part of discovery or failover.
+Normal renewal no longer requires another `join`.
+
+The public network is not live. Ordinary builds have an unconfigured bundle
+and fail with guidance; see [public discovery](discovery.md) for bundle adoption,
+state retention, and platform limits. Native Windows public discovery remains
+unsupported; explicit connections still work. Legacy DNS profiles require an
+explicit new `join`, and an existing public profile never silently adopts a
+different network or authority.
 
 Naming a node with `--public` records it as an operator-supplied entry point.
 It is never verified against the signed list and never becomes a trust
@@ -118,7 +128,9 @@ Saved networks live in `$SOPH_CONFIG_DIR/soph.json`, defaulting to
 `$XDG_CONFIG_HOME/sopholeth/soph.json` and then
 `~/.config/sopholeth/soph.json`. The file is written atomically with
 owner-only permissions. It holds endpoints and node identity reported at
-join time, never payloads. `--config <path>` points at a different file.
+join time, never payloads. Verified public discovery also uses `<config-file>.trust`, a
+private durable metadata/rollback directory; retain it with the config across
+updates. `--config <path>` selects both the profile file and adjacent trust state.
 
 ## Data commands
 
@@ -205,9 +217,10 @@ with `url`, `endpoint`, `node`, and `enclave` before serving. Ctrl-C or SIGTERM
 stops the viewer server and exits 0.
 
 Selection is `--node`, otherwise the normal named-network selection. With
-no selection at all it uses `localhost:8080`; an invalid or expired selected
-profile remains an error. Startup checks node health without changing saved
-profiles. `--bind` defaults to `127.0.0.1`; `--port` defaults to `8181` and
+no selection at all it uses `localhost:8080`. Startup checks node health;
+verified public profiles also refresh through the normal command path and save
+the current verified endpoint. Invalid/expired discovery is an error when no
+valid refresh is available. `--bind` defaults to `127.0.0.1`; `--port` defaults to `8181` and
 accepts `0` for a free port. `--open` launches the system browser. `--q` sets
 an initial case-insensitive search across keys and payload previews.
 
@@ -217,7 +230,11 @@ It forwards streaming and full-value reads to that node through the viewer's
 own address. This also works through HTTPS port forwarding such as
 `https://editor.example/proxy/8181/`; only the viewer port needs forwarding.
 Assets and reads retain the proxy prefix. Forwarded reads target only the
-startup node, and the viewer does not expose write operations.
+selected network, and the viewer does not expose write operations. Verified
+public viewing refreshes hourly or sooner near expiry, cancels the old stream
+during checks, and reconnects to a fresh snapshot. It keeps the profile selected
+at startup even if another command changes the current profile. If discovery
+expires or becomes invalid, upstream viewing stops until verification recovers.
 
 Query parameters `node` and `q` carry the viewer state and override startup
 defaults. Selecting a different node in the browser connects to it directly.
@@ -226,8 +243,9 @@ viewer requires an HTTPS node. No public default endpoint is configured yet.
 
 The initial viewer supports stable card slots, overwrite feedback, local
 TTL countdowns, preview search, full-value inspection, and a mobile column.
-Reconnects replace the view with a new snapshot from the same node. Peer
-failover, topology refresh, sorting, and theme selection remain later work
+Reconnects replace the view with a fresh snapshot. Verified public profiles
+can select another current root during refresh. General peer failover, browser
+topology refresh, sorting, and theme selection remain later work
 in the [stream plan](soph-stream-plan.md).
 
 ## Diagnostics

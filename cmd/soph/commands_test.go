@@ -15,7 +15,8 @@ import (
 
 	"sopholeth/internal/client"
 	"sopholeth/internal/client/clienttest"
-	"sopholeth/internal/trust"
+	"sopholeth/internal/discovery"
+	"sopholeth/internal/trust/bootstrap"
 )
 
 func TestCommandHelpHasNoSideEffects(t *testing.T) {
@@ -37,9 +38,9 @@ func TestCommandHelpHasNoSideEffects(t *testing.T) {
 				}
 				ta.app.getenv = func(string) string { t.Fatal("help accessed environment"); return "" }
 				ta.app.newHTTPClient = func() *http.Client { t.Fatal("help created a client"); return nil }
-				ta.app.publicDiscovery = func(context.Context) (*trust.SignedList, error) {
+				ta.app.publicDiscovery = func(context.Context, bool) (discovery.Identity, bootstrap.View, error) {
 					t.Fatal("help attempted discovery")
-					return nil, nil
+					return discovery.Identity{}, bootstrap.View{}, nil
 				}
 				code, out, errOut := ta.run("", args...)
 				if code != exitOK || errOut != "" || !strings.Contains(out, "Usage: soph") || !strings.Contains(out, want) {
@@ -179,21 +180,6 @@ func TestJoinRejectsInvalidHealthWithoutChangingConfig(t *testing.T) {
 				t.Fatalf("replacement join changed config: exit %d, stderr %q, config %q, err %v", code, errOut, after, err)
 			}
 		})
-	}
-}
-
-func TestPublicJoinSkipsInvalidHealth(t *testing.T) {
-	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{}`) }))
-	defer bad.Close()
-	_, goodAddr := startFakeNode(t)
-	ta := newTestApp(t)
-	ta.app.publicDiscovery = func(context.Context) (*trust.SignedList, error) {
-		return &trust.SignedList{Nodes: []string{bad.URL, goodAddr}, Expires: time.Now().Add(time.Hour).Unix()}, nil
-	}
-	ta.mustRun(t, "", "join")
-	cfg, err := loadConfig(ta.configPath)
-	if err != nil || cfg.Networks["public"].Endpoint != "http://"+goodAddr {
-		t.Fatalf("selected invalid root: %+v, %v", cfg, err)
 	}
 }
 

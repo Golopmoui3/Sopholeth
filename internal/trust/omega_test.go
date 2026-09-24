@@ -3,12 +3,8 @@ package trust
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
-	"fmt"
-	"os"
 	"testing"
 	"time"
 )
@@ -85,54 +81,6 @@ func TestFetchRejectsAnchorBeforeDNS(t *testing.T) {
 		list, err := FetchSigned(context.Background(), DNSConfig{Resolver: forbiddenResolver{t}}, key, time.Now())
 		if list != nil || err == nil {
 			t.Fatalf("invalid anchor %x accepted: %v, %v", key, list, err)
-		}
-	}
-}
-
-// This explicit release gate is skipped by ordinary development tests.
-// make check-public-release always supplies the variable, including when
-// empty, so missing release configuration fails instead of skipping.
-func TestPublicReleaseAnchor(t *testing.T) {
-	expected, enabled := os.LookupEnv("OMEGA_EXPECTED_SHA256")
-	if !enabled {
-		t.Skip("run make check-public-release with OMEGA_EXPECTED_SHA256")
-	}
-	if err := checkReleaseAnchor(OmegaPubkey, expected); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func checkReleaseAnchor(encoded, expected string) error {
-	want, err := hex.DecodeString(expected)
-	if err != nil || len(want) != sha256.Size {
-		return fmt.Errorf("OMEGA_EXPECTED_SHA256 must be the independently verified 64-hex-digit authority fingerprint")
-	}
-	key, err := decodeOmegaPubkey(encoded)
-	if err != nil {
-		return err
-	}
-	got := sha256.Sum256(key)
-	if fmt.Sprintf("%x", got) != hex.EncodeToString(want) {
-		return fmt.Errorf("compiled omega fingerprint %x does not match expected %s", got, expected)
-	}
-	return nil
-}
-
-func TestReleaseFingerprintValidation(t *testing.T) {
-	pub, _ := testKeypair(t)
-	encoded := base64.StdEncoding.EncodeToString(pub)
-	fingerprint := fmt.Sprintf("%x", sha256.Sum256(pub))
-	if err := checkReleaseAnchor(encoded, fingerprint); err != nil {
-		t.Fatal(err)
-	}
-	for _, tc := range []struct{ key, fingerprint string }{
-		{encoded, ""}, {encoded, "not hex"}, {encoded, "00"},
-		{encoded, fmt.Sprintf("%064x", 0)},
-		{"", fingerprint}, {"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", fingerprint},
-		{"AA==", fingerprint}, {"not base64", fingerprint},
-	} {
-		if err := checkReleaseAnchor(tc.key, tc.fingerprint); err == nil {
-			t.Errorf("accepted invalid release key/fingerprint: %+v", tc)
 		}
 	}
 }

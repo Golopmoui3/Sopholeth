@@ -19,8 +19,10 @@ initial `soph serve`, static viewer, and separate dashboard also exist.
 The omega operator lifecycle is implemented, including encrypted custody,
 publication, renewal, rotation, backup checking, and verified Vercel hosting.
 The hosted rehearsal and Kraid service invocation succeeded. Node/CLI consumers
-still use the old discovery path; their migration to the HTTPS trust client
-and public bundle is unfinished. The public network has not been activated.
+now use the HTTPS trust client and embedded bundle with runtime expiry and
+saved-profile refresh. The public bundle remains unconfigured and the network
+has not been activated. Local integration tests do not replace bring-up on the
+real hosts.
 
 ## First public network
 
@@ -35,15 +37,13 @@ entry points. Peer bookkeeping and observed replication counts do not imply
 controlled admission, trusted voters, or consensus.
 
 The SYNC-storm fix (#150) is implemented: explicit peer-list requests receive
-one-way announcements that cannot trigger another reply. The remaining work is:
+one-way announcements that cannot trigger another reply. The Linux discovery
+integration is also implemented. The next work is:
 
-1. Connect nodes and the Linux CLI to the existing HTTPS trust client and
-   bundle, including authenticated bootstrap origins, expiry, cached fallback,
-   and saved-profile refresh. Preserve the existing anonymous data path.
-2. Write the actual host/DNS/TLS/service runbook and deploy three roots from a
+1. Write the actual host/DNS/TLS/service runbook and deploy three roots from a
    reviewed, tested commit. Reuse omega's implemented custody and renewal
    procedures. Record shared failure domains if roots share a host.
-3. Verify put/get/list, healthy replication, TTL expiration, and an additional
+2. Verify put/get/list, healthy replication, TTL expiration, and an additional
    node joining without approval. Then use the running network to test root
    loss, slow peers, restarts, capacity, and remaining audit findings.
 

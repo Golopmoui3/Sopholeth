@@ -112,8 +112,11 @@ nodes together: older builds do not understand `SYNC_REQUEST`, and their legacy
 `SYNC` messages are accepted as announcements without a peer-list response.
 
 Private deployments supply manual HTTP seed addresses. Public discovery uses
-an Ed25519 trust anchor compiled into the binary to verify a DNS-delivered
-root list. It authenticates that list, not every peer or client. See
+a compiled public TUF bundle to verify an HTTPS bootstrap directory and
+connect to its authenticated HTTPS origins. Runtime expiry withdraws official
+root roles and recovery seeds while ordinary peer traffic continues. Advertised
+`http_origin` preserves TLS routing through peer exchange. Omega does not
+authorize ordinary peers or writes. See
 [signed discovery](discovery.md) for the wire format and current limits.
 
 WebSocket attachments carry the same gossip messages as HTTP. They let a

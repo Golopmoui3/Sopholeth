@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -12,13 +11,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"strings"
 	"time"
 
 	"sopholeth/internal/client"
-	"sopholeth/internal/trust"
 )
 
 // ---------- network selection ----------
@@ -47,17 +44,11 @@ func (a *app) selectNetwork(cfg *Config) (string, *Network, error) {
 		}
 		return "", nil, usagef("network %q (from %s) is not saved; saved networks: %s", name, source, strings.Join(cfg.Names(), ", "))
 	}
-	if net.Mode == modePublic && net.Discovery == discoverySignedList && net.RootsExpire > 0 {
-		if time.Now().Unix() >= net.RootsExpire {
-			return "", nil, usagef("network %q: signed root list expired at %s; run 'soph join' again to re-discover",
-				name, time.Unix(net.RootsExpire, 0).UTC().Format(time.RFC3339))
-		}
-	}
 	return name, &net, nil
 }
 
 // connect loads config, selects a network, and returns a client for it.
-func (a *app) connect() (string, *Network, *client.Client, error) {
+func (a *app) connect(ctx context.Context) (string, *Network, *client.Client, error) {
 	cfg, err := a.loadConfig()
 	if err != nil {
 		return "", nil, nil, err
@@ -66,7 +57,29 @@ func (a *app) connect() (string, *Network, *client.Client, error) {
 	if err != nil {
 		return "", nil, nil, err
 	}
-	return name, net, client.New(net.Endpoint, a.newHTTPClient()), nil
+	if net.Mode == modePublic && net.Discovery != discoveryOperatorSupplied {
+		if net.Discovery != discoveryHTTPS {
+			return "", nil, nil, usagef("legacy public profile %q: run 'soph join' with a configured HTTPS build", name)
+		}
+		updated, err := a.publicNetwork(ctx, net, false)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		cfg.Networks[name] = updated
+		if err := saveConfig(a.configPath, cfg); err != nil {
+			return "", nil, nil, err
+		}
+		net = &updated
+	}
+	hc := a.newHTTPClient()
+	if net.Discovery == discoveryHTTPS {
+		var err error
+		hc, err = a.verifiedHTTPClient()
+		if err != nil {
+			return "", nil, nil, err
+		}
+	}
+	return name, net, client.New(net.Endpoint, hc), nil
 }
 
 // ---------- join / use / networks / forget ----------
@@ -105,7 +118,7 @@ func (a *app) cmdJoin(ctx context.Context, args []string) error {
 		if *name != "" {
 			label = *name
 		}
-		net, err = a.joinPublicDiscovered(ctx)
+		net, err = a.publicNetwork(ctx, nil, true)
 		if err != nil {
 			return err
 		}
@@ -180,74 +193,6 @@ func (a *app) probe(ctx context.Context, endpoint string) (*client.Health, error
 	}
 	return health, nil
 }
-
-// joinPublicDiscovered resolves the signed root list and picks the first
-// root that answers a health check.
-func (a *app) joinPublicDiscovered(ctx context.Context) (Network, error) {
-	dctx, cancel := a.requestContext(ctx)
-	list, err := a.publicDiscovery(dctx)
-	cancel()
-	if err != nil {
-		// A resolver that cannot be reached is a connectivity problem
-		// (exit 4). A record that fails to parse or verify is not.
-		var netErr net.Error
-		if errors.As(err, &netErr) || errors.Is(err, context.DeadlineExceeded) {
-			err = &client.UnreachableError{Err: err}
-		}
-		return Network{}, fmt.Errorf("public discovery unavailable: %w", err)
-	}
-	if len(list.Nodes) == 0 {
-		return Network{}, errors.New("public discovery unavailable: signed root list contains no nodes")
-	}
-	var lastErr error
-	for _, root := range list.Nodes {
-		endpoint, err := client.NormalizeEndpoint(root)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		health, err := a.probe(ctx, endpoint)
-		if err != nil {
-			lastErr = err
-			fmt.Fprintf(a.stderr, "root %s failed health check: %v\n", root, err)
-			continue
-		}
-		return Network{
-			Endpoint:    endpoint,
-			Mode:        modePublic,
-			Discovery:   discoverySignedList,
-			Roots:       append([]string(nil), list.Nodes...),
-			RootsExpire: list.Expires,
-			NodeID:      health.NodeID,
-			NodeNetwork: health.Network,
-			Enclave:     health.Enclave,
-			JoinedAt:    time.Now().UTC(),
-		}, nil
-	}
-	return Network{}, fmt.Errorf("no public root passed health checks: %w", lastErr)
-}
-
-// newPublicDiscovery builds a discovery hook that resolves and verifies the
-// signed root list against pubkey using the given DNS configuration. A nil
-// pubkey means the compiled omega key. Tests inject a test anchor and an
-// in-memory resolver.
-func newPublicDiscovery(pubkey ed25519.PublicKey, dns trust.DNSConfig) func(ctx context.Context) (*trust.SignedList, error) {
-	return func(ctx context.Context) (*trust.SignedList, error) {
-		key := pubkey
-		if key == nil {
-			var err error
-			key, err = trust.DecodedOmegaPubkey()
-			if err != nil {
-				return nil, fmt.Errorf("cannot use signed discovery (use 'soph join <node>' for a private network): %w", err)
-			}
-		}
-		return trust.FetchSigned(ctx, dns, key, time.Now())
-	}
-}
-
-// realPublicDiscovery is the production hook: compiled omega key, default
-// DNS names.
-var realPublicDiscovery = newPublicDiscovery(nil, trust.DNSConfig{})
 
 func describeMode(n Network) string {
 	if n.Mode != modePublic {
@@ -393,7 +338,7 @@ func (a *app) cmdPut(ctx context.Context, args []string) error {
 		generated = true
 	}
 
-	name, net, c, err := a.connect()
+	name, net, c, err := a.connect(ctx)
 	if err != nil {
 		return err
 	}
@@ -472,7 +417,7 @@ func (a *app) cmdGet(ctx context.Context, args []string) error {
 	}
 	key := pos[0]
 
-	_, net, c, err := a.connect()
+	_, net, c, err := a.connect(ctx)
 	if err != nil {
 		return err
 	}
@@ -518,7 +463,7 @@ func (a *app) cmdExists(ctx context.Context, args []string) error {
 	}
 	key := pos[0]
 
-	_, net, c, err := a.connect()
+	_, net, c, err := a.connect(ctx)
 	if err != nil {
 		return err
 	}
@@ -563,7 +508,7 @@ func (a *app) cmdList(ctx context.Context, args []string) error {
 		return usagef("--all and --cursor are mutually exclusive")
 	}
 
-	_, net, c, err := a.connect()
+	_, net, c, err := a.connect(ctx)
 	if err != nil {
 		return err
 	}
@@ -630,7 +575,7 @@ func (a *app) cmdDiagnostic(ctx context.Context, which string, args []string) er
 	if len(pos) != 0 {
 		return usagef("%s takes no arguments", which)
 	}
-	_, _, c, err := a.connect()
+	_, _, c, err := a.connect(ctx)
 	if err != nil {
 		return err
 	}

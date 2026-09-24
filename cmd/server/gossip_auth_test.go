@@ -38,7 +38,7 @@ func TestAuthenticatedHTTPClients(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			local := &gossip.Node{ID: "joiner", Address: "127.0.0.1", Enclave: "default"}
+			local := &gossip.Node{ID: "joiner", Address: "127.0.0.1", HTTPPort: 8080, Enclave: "default"}
 			if client == "bootstrap" {
 				protocol := gossip.NewProtocol(local, 1, secret)
 				if err := protocol.Bootstrap(context.Background(), []string{seed}); err != nil {

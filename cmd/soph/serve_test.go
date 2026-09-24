@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,58 @@ import (
 	"testing"
 	"time"
 )
+
+func TestViewerLeaseSwitchAndWithdrawal(t *testing.T) {
+	cancelled := make(chan struct{}, 1)
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: first\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+		cancelled <- struct{}{}
+	}))
+	defer first.Close()
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "data: replacement\n\n") }))
+	defer second.Close()
+	lease := &viewerLease{}
+	lease.set(context.Background(), Network{Endpoint: first.URL})
+	defer lease.clear()
+	viewer := httptest.NewServer(serveViewerHandlerWithLease(lease.current, "", nil))
+	defer viewer.Close()
+	resp, err := viewer.Client().Get(viewer.URL + "/v1/stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	line, err := bufio.NewReader(resp.Body).ReadString('\n')
+	if err != nil || !strings.Contains(line, "first") {
+		t.Fatalf("first snapshot: %q %v", line, err)
+	}
+	lease.clear()
+	select {
+	case <-cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("withdrawal did not cancel active stream")
+	}
+	rejected, err := viewer.Client().Get(viewer.URL + "/v1/stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejected.Body.Close()
+	if rejected.StatusCode != 503 {
+		t.Fatal("viewer kept serving a withdrawn selection")
+	}
+	lease.set(context.Background(), Network{Endpoint: second.URL})
+	reconnected, err := viewer.Client().Get(viewer.URL + "/v1/stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(reconnected.Body)
+	reconnected.Body.Close()
+	if err != nil || !strings.Contains(string(data), "replacement") {
+		t.Fatalf("replacement snapshot: %q %v", data, err)
+	}
+}
 
 type linkWriter struct{ links chan string }
 

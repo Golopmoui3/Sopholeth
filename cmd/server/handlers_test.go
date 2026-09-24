@@ -25,7 +25,7 @@ func newTestServerWithSecret(t *testing.T, secret string) (*HTTPServer, func()) 
 	t.Helper()
 
 	cn := cluster.NewClusterNode(
-		"test-node", "localhost", 0, 0,
+		"test-node", "localhost", 0, 8080, // Valid advertised route; HTTPTransport does not bind it.
 		1, // replicationFactor=1 → quorum=1 (local write sufficient)
 		0, // unlimited storage
 		5*time.Second,

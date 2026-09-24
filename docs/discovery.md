@@ -1,131 +1,164 @@
-# Sopholeth signed public discovery
+# Sopholeth public discovery
 
-Signed discovery is implemented in the Go node. Public activation still
-requires a real omega trust anchor, deployed roots, and DNS publication.
-The current compiled key is deliberately unset. Empty and all-zero anchors
-are rejected before DNS lookup or cached-root authorization. Use private mode
-for ordinary development until the launch work is complete.
-
-This document replaces the former 2.1 proposal with the current contract and
-its known implementation limits.
+The Go node and `soph` use omega's HTTPS/TUF metadata. The embedded public
+bundle is deliberately unconfigured until we create the intended test-network
+authority. No public network is activated by this integration.
 
 ## Trust boundary
 
-The binary contains an Ed25519 public key and the format identifier
-`omega-v1`. The operator holds the corresponding private key offline and
-uses it to sign public root lists. DNS distributes those lists; the compiled
-key authenticates them.
+Omega identifies the network and its official bootstrap roots. A release
+contains the public bundle: network name, fixed HTTPS repository URL, and
+initial signed TUF root. The durable trust client follows signed rotations and
+verifies the `bootstrap.json` target. TLS authenticates connections to the
+approved root origins. Metadata and node requests refuse redirects.
 
-This establishes which addresses may bootstrap the public network. It does
-not authenticate all subsequent topology information, provide per-node
-identities, or protect client values. Optional peer HMAC is a separate
-mechanism configured by an operator; a node does not learn a shared secret
-from a bootstrap response.
+Any compatible node may join and gossip. The CLI needs no identity or admission
+step, and writes remain anonymous. Peer IDs and advertised origins are routing
+information; referrals are not certified identities or trusted voters. Existing
+peer traffic and payload TTLs continue independently of discovery expiration.
 
-## DNS records
+For listed root IDs, the node pins the origin and enclave from verified
+discovery, including roots it has not contacted yet. Bootstrap requests,
+bootstrap referrals, and SYNC cannot contradict those bindings. A new verified
+manifest can move a root's route. Pins survive expiry and failed refreshes;
+the official role and seeds still require a current valid view. Removing a root
+from the manifest leaves any established ordinary peer entry in place.
 
-The current binary queries `_bootstrap.sopholeth.io`. Its TXT value points to
-the signed-list record:
+Unsigned advertisements also cannot change an established ordinary peer's
+origin or enclave. PONG supplies a liveness hint only, never a route update.
+An ordinary node moving endpoints or enclaves should use a fresh node ID, or
+wait for the old entry to be evicted before rejoining. Ordinary IDs remain
+unauthenticated first claims after eviction or restart; this protects existing
+routes without certifying joiners or adding admission requirements.
 
-```text
-omega=_omega.sopholeth.io
+The [trust client reference](../internal/trust/bootstrap/README.md) specifies
+bundle/manifest formats, rollback protection, supported filesystems, and
+rotation behavior. [Omega operations](omega-operations.md) describes custody,
+publication, daily renewal, and seven-day timestamp validity.
+
+## Adopting the public bundle
+
+After creating the intended authority and independently recording its initial
+TUF root fingerprint, copy **only its public `bundle.json`** into
+[`internal/discovery/bundle.json`](../internal/discovery/bundle.json). Review that
+public source change as the network's explicit trust adoption. Do not copy
+private keys or authority homes into this repository.
+
+```sh
+install -m 0644 /path/to/public/bundle.json internal/discovery/bundle.json
+make check-public-release OMEGA_EXPECTED_SHA256=<independently-recorded-fingerprint>
+make build
 ```
 
-These names are compiled into the current release source. Public operation
-still requires domain ownership, DNS publication, deployed roots, and a real
-trust anchor; the rebrand does not publish records or activate a network.
+The gate compares the embedded bundle's initial TUF-root fingerprint with the
+independent record. It no longer hashes the legacy DNS signing key. The checked
+bundle is embedded in both `bin/server` and `bin/soph`, including Docker builds
+from the same source. Ordinary development builds contain `{}` and reject
+public discovery; private connections still work. Bundle adoption and the
+actual host setup belong to the [bring-up runbook](public-network-plan.md#3-put-the-three-roots-on-the-available-hosts).
 
-The target TXT value has four semicolon-separated fields:
+The initial bundle stays fixed through ordinary signed key rotations. A network
+reset needs a deliberately adopted new bundle/build and fresh state; a saved
+public profile never silently switches authorities. A runtime bundle-override
+command is follow-up work (#231).
 
-```text
-v=omega-v1;exp=<unix-seconds>;nodes=root-a.example:8080,root-b.example:8080;sig=<base64-signature>
-```
+## Node startup and transport
 
-This is a format illustration, not a valid record. Use the
-[signing tool](omega-operations.md) to generate a record with a fresh
-expiration and a real signature.
+With `NODE_NETWORK=public` and no `NODE_PEERS`, the node:
 
-| Field | Meaning |
-| --- | --- |
-| `v` | Must match the binary's compiled format version. |
-| `exp` | Unix expiration timestamp in seconds; invalid at or after this time. |
-| `nodes` | Comma-separated root addresses using their **HTTP ports**. |
-| `sig` | Base64-encoded Ed25519 signature. |
+1. Validates the embedded public bundle.
+2. Opens its private durable trust directory and attempts a bounded HTTPS refresh.
+3. Uses only a freshly verified or still-valid durable manifest. No valid view
+   means startup fails; corrupt or incompatible state is not silently reset.
+4. Recognizes its official root role only when `NODE_ID`, `NODE_HTTP_ORIGIN`,
+   and enclave match a listed root. Non-roots can join normally.
+5. Bootstraps over the signed HTTPS origins. A root's response must advertise
+   its signed ID, HTTPS origin, and enclave. Other entries remain ordinary
+   peer referrals.
 
-Publish one nonempty TXT record per lookup name. The resolver selects the
-first nonempty record; multiple candidate records are not a version-negotiation
-mechanism. Split strings within one TXT record are concatenated by the DNS
-resolver before parsing.
+`NODE_HTTP_ORIGIN=https://root.example` is the externally reachable origin,
+including a nonstandard port when needed. It is independent of the backend
+`NODE_HTTP_PORT`. Set it for each root and for any other node whose API/gossip
+listener is behind a TLS proxy. The `http_origin` field travels through HTTP
+bootstrap and gossip messages. Outgoing gossip preserves that origin; nodes
+without it retain the explicit legacy `http://address:http_port` route.
+A malformed explicit origin fails rather than falling back to plaintext.
+Use matching builds: older peers do not preserve this field.
 
-## Canonical signature payload
+Explicit HTTP(S) URLs use their scheme's default port; bare addresses still
+use HTTP port 8080. Neither bootstrap nor gossip follows redirects. System CA
+and hostname verification stay enabled. The signed origin authenticates the
+bootstrap connection, not the honesty of subsequent peer advertisements.
 
-The signature covers the UTF-8 bytes of:
+In public mode, a node with no current official root role returns `403` from
+`POST /v1/bootstrap`. Private nodes answer without that gate. `NODE_PEERS`
+remains a deliberate unverified override and never grants a root role.
+Automatic outbound WebSocket attachment is disabled in public mode pending the
+separate transient/WSS work; exclude unsupported WS ingress during bring-up.
 
-```text
-v=omega-v1;exp=<unix-seconds>;nodes=<lexicographically-sorted-addresses>
-```
+## Durable state and runtime refresh
 
-Fields appear in the order `v`, `exp`, `nodes`, separated by semicolons,
-without inserted whitespace. Addresses are sorted and joined with commas.
-The `sig` field is excluded. The signer appends
-`;sig=<base64-signature>` for transport.
+Nodes store discovery under `$NODE_STATE_DIR/discovery`, defaulting to
+`$HOME/.sopholeth/state/discovery`. Use a persistent directory owned by the
+service account. It contains public metadata and rollback history, not signing
+keys or application payloads. Preserve it across restarts and deployments.
+There is no root-owned fallback directory. Legacy `NODE_CACHE_DIR` and
+`root-list.json` are not consumed by the node's HTTPS path.
 
-The parser rejects missing, duplicate, unknown, and malformed fields.
-Verification additionally rejects unset/all-zero or wrong-length anchors,
-then checks version, expiration, signature length, and signature validity.
-Unknown fields require a new signed format version;
-they cannot be treated as authenticated extensions to `omega-v1`.
+After a successful refresh, nodes check again hourly, sooner near expiry.
+Failures retry after 30 seconds, doubling to at most ten minutes; retries do
+not wait another normal refresh period. Failed fetches retain only a
+revalidated, still-valid durable view. Verified root or targets transitions
+withdraw the previous view before any subsequent download can stall.
 
-The implementation is in [signedlist.go](../internal/trust/signedlist.go),
-with [format tests](../internal/trust/signedlist_test.go).
+Every root-role and recovery-seed lookup checks the accepted deadline without
+waiting on network or disk I/O. At the deadline, the official role and seeds
+are unavailable even during a blocked refresh. A valid later refresh restores
+them. This does not evict ordinary peers or invalidate stored values.
 
-## Startup and cache
+## CLI and viewer
 
-With public mode and no manual peers, the node:
+`soph join` discovers a reachable official root, verifies its health response
+against the signed ID/enclave, and saves a client profile. It starts no node or
+background service. An explicit `soph join <node>` continues to work through
+any reachable compatible node; it does not claim omega verification.
 
-1. Validates the compiled trust anchor. Unconfigured builds stop here.
-2. Resolves the bootstrap pointer and signed list.
-3. Parses and verifies the list against the compiled key and current time.
-4. Caches the verified list and uses its addresses as seeds.
-5. Marks itself as a root if its exact advertised `address:httpPort` appears
-   in the list.
+Public profiles bind to the initial bundle fingerprint, network, and repository.
+Each command revalidates durable state in `<config-file>.trust`; hourly checks
+or an unusable cached view trigger bounded refresh. Saved endpoint lists and
+expiry fields are informational, never a substitute for verified metadata.
+The client prefers the selected root while it remains listed and healthy,
+then probes other current roots. It does not switch to another saved network.
+Legacy DNS profiles require an explicit new `join`. A saved public profile
+whose trust directory is missing reports the missing rollback history instead
+of silently initializing it again.
 
-If DNS lookup or verification fails, startup attempts the on-disk cache and
-verifies it again. Without a valid unexpired list from either source,
-startup fails. There is no unsigned DNS fallback.
+Discovery and health selection finish before a data request. No failure or
+renewal implicitly retries a PUT, and no metadata work after acceptance can
+replace its reported outcome. Discovery rotation does not require manual
+rejoining. Private and explicitly supplied public connections do not acquire a
+metadata-expiry requirement.
 
-The CLI reports an unconfigured authority without saving a public profile.
-The dashboard also refuses public discovery with an unset anchor; explicit
-`--seeds` remain available as an unverified override for private development.
+`soph serve` uses this same saved-profile path and retains the network selected
+at startup, even if another command changes the current profile. For verified
+public profiles it refreshes in-process, suspends upstream requests during the
+check, and cancels existing streams on refresh or expiry. Reconnection receives
+a fresh node-local snapshot. Failed verification leaves the viewer unavailable
+until valid discovery returns; it does not select an unverified endpoint.
 
-The cache is `root-list.json` in the configured
-[cache directory](configuration.md#operations). It contains public signed
-metadata. Failure to persist a freshly verified list is logged and does not
-prevent using it in memory.
+## Validation and remaining scope
 
-In public mode, non-roots return `403` from `POST /v1/bootstrap`. Private
-mode uses manual peers and does not apply the public-root gate. Setting
-manual peers in public mode skips verification and leaves root status false.
+Local fixtures cover actual omega publication through TUF discovery, saved CLI
+profile refresh, HTTPS bootstrap and gossip to an ordinary unlisted node,
+root/ordinary peer route-substitution rejection and signed root-route updates,
+certificate/hostname and redirect rejection, runtime expiry during a stalled
+refresh, retry scheduling, and viewer stream withdrawal/reconnection. Existing
+trust tests cover signatures, rotation, rollback, and durable writes.
 
-## Refresh and current limits
-
-A background refresher requests a new list before expiration with jitter.
-Successful verification updates the cache, current seeds, and root membership.
-Failed refreshes retain the previous list and retry with backoff. Isolation
-recovery uses the refresher's current seeds.
-
-**Running-node expiration remains unresolved.** Startup rejects an expired
-list, but the current refresher retains its last list on failure and root
-status changes only after a successful update. A running root is not
-automatically demoted when that retained list expires, and recovery can
-continue using its old seeds. Correcting and testing this is a
-[public-alpha gate](roadmap.md#before-public-alpha).
-
-Removing a root from a newly signed list takes effect at each node when it
-accepts that update. Older unexpired signed lists can still be replayed until
-they expire; there is no independent revocation channel.
-
-Key and format rotation need a coordinated binary and discovery rollout.
-The current client supports one compiled key/version and one bootstrap name.
-Publishing multiple versions or changing a shared pointer does not by itself
-let old and new clients select different trust anchors.
+These checks establish the integration, not a deployed network. Three-root
+operation, external DNS/TLS/ingress, host failures, and real `soph join` behavior
+will be validated during bring-up. Native Windows public discovery is still
+unsupported pending its storage backend. The standalone dashboard remains on
+the disabled legacy DNS path and is outside this test-network milestone; its
+explicit private seeds remain available. Historical DNS code and the legacy
+burn-in signer are not public-network fallbacks.
