@@ -103,6 +103,14 @@ All nodes run the same software, with separate discovery and connection roles:
 These roles can overlap. They route and discover peers; they do not confer
 ownership of client data. Roots do not approve client writes.
 
+An under-peered node sends `SYNC_REQUEST` to ask known peers for topology.
+Each response is a one-way `SYNC` announcement, including the responder's own
+entry. Bootstrap notifications and WebSocket welcome entries also use `SYNC`;
+announcements never request another peer list. This prevents an endless exchange
+when two nodes remain below their desired peer count. Upgrade participating
+nodes together: older builds do not understand `SYNC_REQUEST`, and their legacy
+`SYNC` messages are accepted as announcements without a peer-list response.
+
 Private deployments supply manual HTTP seed addresses. Public discovery uses
 an Ed25519 trust anchor compiled into the binary to verify a DNS-delivered
 root list. It authenticates that list, not every peer or client. See

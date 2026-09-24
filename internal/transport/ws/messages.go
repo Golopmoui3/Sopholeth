@@ -100,7 +100,7 @@ func gossipTypeFor(t gossip.MessageType) AttachmentType {
 		return AttachmentTypePing
 	case gossip.MessageTypePong:
 		return AttachmentTypePong
-	case gossip.MessageTypeSync:
+	case gossip.MessageTypeSync, gossip.MessageTypeSyncRequest:
 		return AttachmentTypeTopologySync
 	default:
 		return AttachmentTypePut

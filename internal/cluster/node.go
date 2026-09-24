@@ -326,7 +326,7 @@ func (cn *ClusterNode) GetWithMetadata(key string) ([]byte, time.Time, time.Dura
 func (cn *ClusterNode) HandleGossipMessage(msg *gossip.Message) error {
 	// Route protocol messages to the protocol handler
 	switch msg.Type {
-	case gossip.MessageTypePing, gossip.MessageTypePong, gossip.MessageTypeSync:
+	case gossip.MessageTypePing, gossip.MessageTypePong, gossip.MessageTypeSync, gossip.MessageTypeSyncRequest:
 		// Let the protocol handle its own messages
 		return cn.protocol.HandleMessage(msg)
 	default:
@@ -338,7 +338,7 @@ func (cn *ClusterNode) HandleGossipMessage(msg *gossip.Message) error {
 func (cn *ClusterNode) handleGossipMessage(msg *gossip.Message) error {
 	// First let the protocol handle system messages
 	switch msg.Type {
-	case gossip.MessageTypePing, gossip.MessageTypePong, gossip.MessageTypeSync:
+	case gossip.MessageTypePing, gossip.MessageTypePong, gossip.MessageTypeSync, gossip.MessageTypeSyncRequest:
 		logging.Warn("[%s] Unexpected %s message in cluster handler", cn.localNode.ID, msg.Type)
 		return nil
 	case gossip.MessageTypePut:

@@ -148,6 +148,7 @@ func TestAllMessageTypesRoundTrip(t *testing.T) {
 		gossip.MessageTypePing,
 		gossip.MessageTypePong,
 		gossip.MessageTypeSync,
+		gossip.MessageTypeSyncRequest,
 	} {
 		t.Run(string(mt), func(t *testing.T) {
 			got := make(chan *gossip.Message, 1)

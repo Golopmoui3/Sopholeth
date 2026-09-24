@@ -75,19 +75,20 @@ type Message struct {
 	TTL       int         `json:"ttl,omitempty"`
 	Timestamp time.Time   `json:"timestamp"`
 	MessageID string      `json:"message_id"`
-	// Node information for JOIN messages
+	// Peer information for discovery and liveness messages.
 	NodeInfo *Node `json:"node_info,omitempty"`
 }
 
 type MessageType string
 
 const (
-	MessageTypePut  MessageType = "PUT"
-	MessageTypeGet  MessageType = "GET"
-	MessageTypePing MessageType = "PING"
-	MessageTypePong MessageType = "PONG"
-	MessageTypeSync MessageType = "SYNC"
-	MessageTypeAck  MessageType = "ACK"
+	MessageTypePut         MessageType = "PUT"
+	MessageTypeGet         MessageType = "GET"
+	MessageTypePing        MessageType = "PING"
+	MessageTypePong        MessageType = "PONG"
+	MessageTypeSync        MessageType = "SYNC" // One-way peer announcement, including replies.
+	MessageTypeSyncRequest MessageType = "SYNC_REQUEST"
+	MessageTypeAck         MessageType = "ACK"
 )
 
 // MaxPingFailures is the number of consecutive failed health checks before
@@ -254,7 +255,7 @@ func (p *Protocol) handleMessage(msg *Message) error {
 		return p.handlePing(msg)
 	case MessageTypePong:
 		return p.handlePong(msg)
-	case MessageTypeSync:
+	case MessageTypeSync, MessageTypeSyncRequest:
 		return p.handleSync(msg)
 	case MessageTypePut, MessageTypeAck:
 		// Application-level messages - pass to handler
@@ -348,11 +349,10 @@ func (p *Protocol) handleSync(msg *Message) error {
 		logging.Debug("[%s] SYNC message from %s has no NodeInfo", p.localNode.ID, msg.From)
 	}
 
-	// Respond with our peer list so the sender can discover peers
-	// it doesn't know about yet. Only respond to direct SYNC messages
-	// (where From == NodeInfo sender), not to propagated peer info,
-	// to prevent amplification loops.
-	if msg.NodeInfo != nil && msg.NodeInfo.ID == msg.From {
+	// Only explicit requests solicit a peer list. A SYNC announcing the
+	// responder itself also has NodeInfo.ID == From, so that equality alone
+	// cannot distinguish a request from a reply and creates a reply loop.
+	if msg.Type == MessageTypeSyncRequest && msg.NodeInfo != nil && msg.NodeInfo.ID == msg.From {
 		p.respondWithPeerList(msg.From)
 	}
 
@@ -362,7 +362,7 @@ func (p *Protocol) handleSync(msg *Message) error {
 // respondWithPeerList sends a SYNC message for each known peer (including
 // ourselves) to the given node. This propagates peer knowledge transitively:
 // if A knows B and C, but D only knows A, D will learn about B and C when
-// A responds to D's SYNC.
+// A responds to D's SYNC_REQUEST. These SYNC announcements never solicit replies.
 func (p *Protocol) respondWithPeerList(targetID NodeID) {
 	p.peersMutex.RLock()
 	target, exists := p.peers[targetID]
@@ -707,9 +707,9 @@ func (p *Protocol) performTopologySync(ctx context.Context) {
 	logging.Debug("[%s] Topology sync: have %d peers, expected %d - requesting peer lists",
 		p.localNode.ID, peerCount, expectedPeers)
 
-	// Send SYNC requests to all known peers to get their peer lists
+	// Send explicit requests; ordinary SYNC announcements never solicit replies.
 	msg := &Message{
-		Type:      MessageTypeSync,
+		Type:      MessageTypeSyncRequest,
 		From:      p.localNode.ID,
 		Timestamp: time.Now(),
 		MessageID: generateMessageID(),
