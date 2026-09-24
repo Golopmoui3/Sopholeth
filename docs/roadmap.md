@@ -11,117 +11,88 @@ guarantees.
 
 ## Current foundation
 
-The Go node implements in-memory TTL storage, an HTTP API, enclave gossip,
-quorum reporting, signed discovery and caching, WebSocket substrate/transient
-attachments, and an embedded MCP interface. A separate dashboard observes
-topology.
+The Go node already implements anonymous HTTP put/get/list, in-memory TTL
+storage, enclave gossip, replication acknowledgments, signed discovery and
+caching, WebSocket attachments, and an embedded MCP interface. The `soph` CLI,
+initial `soph serve`, static viewer, and separate dashboard also exist.
 
-Public launch remains pending. The compiled omega public key is unset and
-public discovery fails closed. Discovery publication is pending, and the restored Go
-WebSocket tree needs sustained validation. The [rebrand checklist](rebrand.md)
-tracks the naming transition.
+The omega operator lifecycle is implemented, including encrypted custody,
+publication, renewal, rotation, backup checking, and verified Vercel hosting.
+The hosted rehearsal and Kraid service invocation succeeded. Node/CLI consumers
+still use the old discovery path; their migration to the HTTPS trust client
+and public bundle is unfinished. The public network has not been activated.
 
 ## First public network
 
-Build the working `soph omega` suite first, then document and rehearse a public
-network with three fixed-port roots in the shared `default` enclave. The
-[public-network plan](public-network-plan.md) defines the implementation
-order, required evidence, and operator cutover. It takes priority over the
-remaining viewer and MCP backlog.
+The immediate objective is **three public roots running for testing**, using
+Linux standalone nodes in the `default` enclave. The
+[revised network plan](public-network-plan.md) separates existing functionality,
+actual bring-up prerequisites, and repairs to make on the running network.
 
-Before remote rehearsal and public exposure, resolve unauthenticated peer
-mutations ([#211](https://github.com/TickTockBent/Sopholeth/issues/211)),
-identity-blind liveness ([#213](https://github.com/TickTockBent/Sopholeth/issues/213)),
-and serial broadcast stalls ([#212](https://github.com/TickTockBent/Sopholeth/issues/212)).
-Settle peer identity and admission before discovery transport integration;
-the launch plan sequences implementation after the remaining omega work and
-the SYNC-storm prerequisite. A shared-secret lab does not satisfy these
-public launch gates.
+Participation is permissionless: any compatible node can bootstrap, join, and
+gossip, and writes have no authenticated author. Omega endorses bootstrap
+entry points. Peer bookkeeping and observed replication counts do not imply
+controlled admission, trusted voters, or consensus.
 
-The local viewer and initial `soph serve` are implemented. Use them and the
-`soph` HTTP client to validate the remote roots. The
-[viewer plan](soph-stream-plan.md) retains the remaining feature work; finishing
-its local-cluster polish is not a prerequisite for omega development.
-Keep the existing aesthetic and named-network behavior.
+The next work is:
 
-MCP is explicitly deferred. Dashboard deployment and full transient-writer
-participation are later surfaces; any endpoint exposed by a root must still
-meet its applicable safety and lifecycle requirements.
+1. Fix the under-peered SYNC storm (#150), which interferes with ordinary
+   startup and root-loss tests.
+2. Connect nodes and the Linux CLI to the existing HTTPS trust client and
+   bundle, including authenticated bootstrap origins, expiry, cached fallback,
+   and saved-profile refresh. Preserve the existing anonymous data path.
+3. Write the actual host/DNS/TLS/service runbook and deploy three roots from a
+   reviewed, tested commit. Reuse omega's implemented custody and renewal
+   procedures. Record shared failure domains if roots share a host.
+4. Verify put/get/list, healthy replication, TTL expiration, and an additional
+   node joining without approval. Then use the running network to test root
+   loss, slow peers, restarts, capacity, and remaining audit findings.
+
+Peer-record defects (#211/#213), ACK accounting (#164), slow-peer delivery
+(#212), and related races/lifecycle defects remain real work. Scope each fix to
+observed protocol behavior; do not introduce membership authorization or writer
+identity to satisfy an audit. They are not collectively a prerequisite for
+starting useful network tests. A failure that prevents basic joining or healthy
+replication on the actual deployment takes priority.
+
+Native Windows discovery remains a follow-up deliverable; initial Linux
+bring-up need not wait for it. MCP, dashboard deployment, full transient-writer
+participation, and viewer polish are deferred. Keep unused endpoints excluded
+from the initial deployment and test them before enabling their participation
+mode. The existing viewer can observe the network as its streaming path is
+included; retain the current aesthetic and named-network behavior.
 
 ## Before public alpha
 
-### Establish precise behavior
+This is broader follow-up work after the initial test network is running.
+Earlier launch labels refer to this broader scope. The network plan defines
+what is required for first bring-up; this list is not a second prerequisite
+checklist for that milestone.
 
-- Authenticate peer identity and changes to addresses/enclaves, define
-  admission and safe identity replacement, and require fresh authenticated
-  liveness responses. Persist root identities across restarts.
-- Count confirmations from distinct eligible replicas. Cover duplicate,
-  unknown, cross-enclave, and late ACKs, relayed ACKs, and topology changes
-  while a write is pending.
-- Bound send/forward concurrency, queues, and lifetimes. Slow peers must not
-  block a healthy quorum or healthy-peer delivery, and write deadlines must
-  cover dispatch as well as quorum waiting. Preserve truthful pending outcomes.
-- Preserve local TTL semantics. Test delayed replication, clock disagreement,
-  overwrite near expiration, and cleanup accounting.
-- Validate incoming gossip independently of client HTTP validation: TTL
-  bounds, message IDs and types, payload limits, addresses, and enclave scope.
-- Handle signed-list expiration while a node is running. Root status and
-  recovery seeds must not remain authorized solely by an expired list.
-- Bound public ingress so one client cannot exhaust a root: count keys and
-  per-entry overhead against capacity, limit key and value size on every
-  ingress path, set read/write/idle deadlines and connection limits, make
-  listing cost proportional to the page, bound background expiry work per
-  lock hold, aggregate IPv6 clients for rate limiting, and keep the stream
-  available as data grows (#217–#221).
-- Make standalone listener binding and public exposure explicit. Embedded
-  MCP listener and ephemeral-port work is deferred.
-- Test startup, cancellation, repeated shutdown, and exposed connection
-  lifecycles. Complete broader transient reconnection tests before supporting
-  that participation mode.
+- Work through replication, peer bookkeeping, capacity, deduplication, replay,
+  and shutdown defects using small, targeted reproductions. Preserve the
+  current local-lifetime and opaque-value contract.
+- Harden public resource handling: storage overhead, key/value limits,
+  listing and expiry work, rate limiting, HTTP deadlines and connections, and
+  stream behavior (#217–#221). Deployment bounds used for testing do not close
+  these issues or establish denial-of-service resistance.
+- Complete native Windows public-client state storage and integration tests
+  before claiming Windows `soph join`, profile renewal, and `soph serve` support.
+- Validate WebSocket/transient behavior and safeguards before enabling it.
+  Dashboard and MCP work retain their own scope.
+- Expand fault, churn, partition, capacity, and sustained-load testing as
+  problems are fixed. Reuse the [burn-in harness](../test/burnin/README.md) where
+  useful; record workloads, versions, resource use, and observed limits.
+- Complete release-pipeline review/test gates and artifact verification
+  (#223/#224) before distributing a general release. The test deployment uses
+  explicitly recorded builds rather than floating image tags.
+- Publish accurate support limits, operator recovery/upgrade instructions,
+  and the distribution terms already flagged for review in `LICENSE`.
 
-### Produce repeatable evidence
-
-- Keep build and race tests green; add parser fuzzing and targeted
-  integration coverage for the behavior above.
-- Validate the initial three-root standalone deployment and HTTP clients:
-  root loss, churn, partitions, healing, duplicate delivery, and capacity
-  exhaustion. The broader substrate/transient matrix is required before
-  supporting that later mode; MCP-specific tests are deferred.
-- Measure throughput, latency, process memory, and quorum outcomes from both
-  the load driver and nodes. Do not infer request throughput from allocations.
-- Run a ramp to failure and a sustained soak with recorded commits,
-  configuration, workloads, fault timings, and recovery outcomes.
-- Use and adapt the [burn-in harness](../test/burnin/README.md) for the actual
-  three-root configuration, preserving driver failures and accepted TTLs.
-
-Historical runs provide useful observations but do not validate the current
-tree, a public deployment, or untested failure modes.
-
-### Prepare operations
-
-- Gate publishing on review and tests: protect `main` and release tags, and
-  require a CI gate that reports on every PR while running Go tests only for
-  relevant changes. Release pipelines must test the exact tagged commit before
-  publishing (#223). Pin and sign release artifacts as the supported install
-  path requires (#224).
-- Publish the renamed artifacts and site after validating this code rebrand.
-- Reconcile the legacy proprietary appendix in `LICENSE` with the intended
-  distribution terms before public release.
-- Complete the unified `soph omega` workflow, rotation and recovery rehearsal,
-  and production operator guide before creating the real authority. Install
-  only its public trust material in the release and on nodes.
-- Deploy three independent, reachable roots across failure domains using the
-  rehearsed runbook and shared `default` enclave.
-- Publish signed discovery under the acquired domain, with monitoring for
-  expiration, failed refreshes, unreachable roots, and degraded replication.
-- Verify startup with valid DNS, valid cached fallback, invalid signatures,
-  expired records, and no trusted discovery source.
-- Publish an operator guide with resource sizing, supported versions,
-  upgrade and rollback steps, and an incident contact.
-
-**Exit:** a fresh release can join the public network through verified
-discovery, exchange expiring data, and recover from the documented faults.
-Known limits and reproducible validation results accompany the release.
+Longer testing happens on the running network and disposable local clusters.
+It does not promise independent trusted replicas, global ordering, durable
+payload recovery, or authenticated writers. Application-level signatures and
+identity remain client concerns.
 
 ## Demo web application
 

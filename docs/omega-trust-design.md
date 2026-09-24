@@ -3,8 +3,9 @@
 Status: trust client, atomic encrypted authority initialization, local-directory
 and Vercel publication, unattended online renewal, online/membership/root-key
 rotation, served-release verification, and root-expiry recovery are implemented.
-The hosted disposable rehearsal passed; remote scheduling, release integration,
-and discovery consumers remain pending.
+The hosted disposable rehearsal and Kraid service invocation passed. A full
+daily remote renewal cycle, release integration, and discovery consumers remain
+to be completed on the revised test-network path.
 The completed [spike](../test/omega-tuf/README.md) established the design for
 [#195](https://github.com/TickTockBent/Sopholeth/issues/195) and the
 [public-network plan](public-network-plan.md). Its scenarios now exercise the
@@ -190,6 +191,11 @@ and after download. Do not encode secrets or replication topology in it.
 Finalize the exact wire schema with the endpoint work in
 [#194](https://github.com/TickTockBent/Sopholeth/issues/194).
 
+This manifest authorizes bootstrap entry points, not ordinary peer membership.
+Any compatible node may join and gossip without appearing in it. Root node IDs
+are protocol handles; the manifest does not authenticate write authors or make
+replication acknowledgments a consensus certificate.
+
 HTTPS metadata delivery alone does not repair bootstrap transport. Nodes,
 CLI, and viewer must follow signed endpoint schemes consistently, verify TLS
 certificates and hostname identity, and define how configured node identity
@@ -338,18 +344,21 @@ steps 1–2 are implemented. Step 3 now includes atomic disposable `init`,
 journaled local-directory `publish`, restricted online custody provisioning,
 unattended renewal, online/membership/root-key rotation, and local/HTTPS-verified
 `status`, root-expiry recovery, and replacement with one rotated root signer
-unavailable. Production custody/hosting and standalone-tool
-retirement remain pending. The compiled public bundle/release-gate migration,
-node/CLI/dashboard adoption, runtime callbacks, and transport checks remain
+unavailable. Encrypted custody, Vercel hosting, the hosted rehearsal, and
+standalone-tool retirement are also implemented. The compiled public bundle
+and release-gate migration, node/CLI/dashboard adoption, runtime callbacks,
+and transport checks remain
 pending. The [client reference](../internal/trust/bootstrap/README.md)
 records its supported storage platforms and exact validation boundaries.
 
-Native Windows public-client support is required before the TUF consumer
-cutover. The [Windows gate](public-network-plan.md#windows-public-client-gate)
+The first TUF consumer integration and three-root test deployment target Linux.
+Native Windows public-client support remains planned. The
+[Windows gate](public-network-plan.md#windows-public-client-gate)
 covers the complete storage backend, including ACL/account policy, ancestor
 paths, locking, durable replacement, and native Windows regression tests.
-The current unsupported-platform error is an interim implementation limit;
-Linux root-node deployment does not define the public CLI's platform scope.
+The current unsupported-platform error remains explicit until that backend is
+ready. Windows support is a follow-up deliverable, not a prerequisite for the
+Linux test network; do not claim it from cross-compilation alone.
 
 The spike does not close #195 or the related audit issues. It establishes a
 feasible library and trust lifecycle and identifies the integration work

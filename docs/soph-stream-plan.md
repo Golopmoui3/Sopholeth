@@ -171,20 +171,21 @@ and root-facing correctness requirements follow the public-network plan.
 
 ## Phase 4: public network and soph.stream launch
 
-Complete the [public-alpha gates](roadmap.md#before-public-alpha) alongside
-the final staging work. The stream provides an additional observation tool;
-network correctness and load evidence also come from tests and the workload
-driver.
+The three-root test network can start before this broader viewer rollout; its
+immediate prerequisites are in the [network plan](public-network-plan.md).
+Complete relevant [public-alpha follow-ups](roadmap.md#before-public-alpha)
+as the viewer's exposed paths are enabled. The stream provides an observation
+tool; network correctness and load evidence also come from tests and the
+workload driver.
 
 ### Deliver
 
 - Validated quorum, replication, enclave, lifecycle, and discovery-expiration
   behavior with the required multi-node failure and sustained-load evidence.
-- The working `soph omega` suite, a production public trust bundle, three
-  independent reachable roots, verified publication, monitoring, and operator
+- The working `soph omega` suite, a public trust bundle, three reachable roots
+  with recorded failure domains, verified publication, monitoring, and operator
   recovery procedures. Follow the [public-network plan](public-network-plan.md);
-  [omega operations](omega-operations.md) remains an interim reference until
-  the production workflow replaces it.
+  [omega operations](omega-operations.md) documents the implemented workflow.
 - Published release artifacts and an HTTPS stream endpoint for the intended
   public enclave, with tested resource limits and the stream disable switch.
 - The viewer at `soph.stream`, configured to use that endpoint by default,
@@ -203,8 +204,8 @@ operator procedures accompany the release.
 
 ## Work that can proceed alongside local development
 
-Phase 1 and initial `soph serve` are available. The next implementation
-milestone is the omega suite, followed by the three-root runbook and remote
-rehearsal. Use the viewer to observe those nodes and address failures on that
-path. Broader viewer features can follow without becoming prerequisites for
-the trust and network work.
+Phase 1, initial `soph serve`, and the omega operator suite are available.
+The next network work is discovery consumer integration and deployment of three
+roots for testing, with the SYNC-storm fix before bring-up. Use the existing
+viewer when its endpoint is enabled and address failures on that path. Broader
+viewer features can follow without becoming prerequisites for the network.
