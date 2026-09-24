@@ -45,6 +45,11 @@ The [API reference](api.md) defines the current TTL defaults and bounds.
 
 ## Peer replication within enclaves
 
+Public participation is permissionless. Any compatible node can bootstrap,
+join, and gossip without membership approval. Peer IDs support routing and
+replication bookkeeping; writes have no authenticated author. Omega endorses
+bootstrap roots, not ordinary participants or their values.
+
 Every reachable member of an enclave is a replication target. The core does
 not shard payloads or elect a primary data owner. Finite TTL, partitions,
 resource limits, and node failures can prevent delivery.

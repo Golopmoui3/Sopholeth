@@ -127,7 +127,8 @@ Production initialization always uses encrypted keys. Schema 1, which embeds
 six plaintext keys, remains permanently disposable-only. Schema 2 separates
 public identity from private encrypted files and rejects mixed custody modes.
 Windows public-client support remains a
-[separate required gate](public-network-plan.md#windows-public-client-gate).
+[separate planned deliverable](public-network-plan.md#windows-public-client-gate);
+the initial Linux test network can run before that backend is ready.
 
 `status` verifies signed public identity, history, and the completion receipt without a password.
 Text and `--json` output include state, network, repository, initial-root

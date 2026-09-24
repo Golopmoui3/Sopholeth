@@ -4,7 +4,7 @@ Status: encrypted initialization, publication, all rotation roles, separate rene
 custody, and backup/reset rehearsal implemented on Linux. Revised 2026-09-23.
 This records the first-network profile for
 [#195](https://github.com/TickTockBent/Sopholeth/issues/195) and the
-[public-network plan](public-network-plan.md#1-build-the-omega-suite).
+[public-network plan](public-network-plan.md#what-is-already-ready).
 See [omega operations](omega-operations.md) for commands and recovery steps.
 Production creation now selects encrypted schema 2 by default; no live authority
 has been created. Hosted publication and discovery consumer integration remain.

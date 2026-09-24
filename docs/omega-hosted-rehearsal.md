@@ -93,4 +93,6 @@ A full daily cycle under the remote timer remains unobserved; the successful
 service invocation verifies the current release. The final authority,
 its independent backup/recovery record, and release fingerprint are still future
 steps. Continue with the [launch plan](public-network-plan.md); successful metadata
-hosting does not close peer identity, admission, Windows-client, or other root gates.
+hosting does not complete node/CLI discovery integration or deploy the roots.
+The revised plan targets a permissionless three-root test network; Windows
+clients and broader hardening follow separately.
