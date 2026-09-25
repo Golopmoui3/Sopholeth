@@ -216,7 +216,7 @@ func TestKeysPageFromNumericQuery(t *testing.T) {
 	defer cleanup()
 
 	for i := 0; i < 5; i++ {
-		putKey(t, server, "n" + strconv.Itoa(i))
+		putKey(t, server, "n"+strconv.Itoa(i))
 	}
 	keys, _ := listKeys(t, server, "?limit=2")
 	if len(keys) != 2 {

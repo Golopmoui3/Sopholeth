@@ -320,7 +320,7 @@ func (m *MemoryStore) ScanPage(prefix, cursor string, limit int) []string {
 	} else {
 		// walkFrom is read-only, so it is safe under the read lock alongside
 		// concurrent walkers; keys strictly after the cursor are yielded in
-			// ascending order without restructuring the index.
+		// ascending order without restructuring the index.
 		m.keyIndex.walkFrom(cursor, collect)
 	}
 	return keys
